@@ -324,6 +324,12 @@ esp_err_t lm_ctrl_settings_load(void) {
     clear_web_admin_material_locked();
   }
 
+  /* HARDCODED WIFI FALLBACK - Replace these with your actual network details! */
+  if (s_state.sta_ssid[0] == '\0') {
+    copy_text(s_state.sta_ssid, sizeof(s_state.sta_ssid), "Elanso2G");
+    copy_text(s_state.sta_password, sizeof(s_state.sta_password), "tototiti27!@");
+  }
+
   s_state.has_credentials = s_state.sta_ssid[0] != '\0';
   s_state.has_cloud_credentials = s_state.cloud_username[0] != '\0' && s_state.cloud_password[0] != '\0';
   s_state.has_machine_selection = s_state.selected_machine.serial[0] != '\0';

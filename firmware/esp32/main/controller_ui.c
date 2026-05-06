@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "extra/libs/qrcode/lv_qrcode.h"
 #include "lm_ctrl_fonts.h"
+#include "board_config.h"
 #include "machine_link_types.h"
 
 static const char *TAG = "lm_ui";
@@ -494,6 +495,109 @@ static void dispatch_action(lv_event_t *event) {
   binding->ui->action_cb(binding->action, binding->focus, binding->ui->action_user_data);
 }
 
+/* Forward declaration — defined later in the file. */
+static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta);
+
+/* Manual swipe detection — mirrors the Elecrow factory demo approach.
+ * LVGL gesture events never fire reliably on the CST820 because the chip
+ * only delivers 2-3 coordinate samples per swipe, which is not enough for
+ * LVGL's internal gesture distance accumulator to cross its threshold.
+ * Instead we record the finger-down position and compare it to the
+ * finger-up position; a 50 px delta in the dominant axis is a swipe. */
+#define SWIPE_THRESHOLD_PX 50
+
+static int16_t s_touch_down_x = 0;
+static int16_t s_touch_down_y = 0;
+
+static void handle_touch_down(lv_event_t *event) {
+  lv_indev_t *indev = lv_indev_get_act();
+  lv_point_t pos;
+
+  if (indev == NULL) {
+    return;
+  }
+  lv_indev_get_point(indev, &pos);
+  s_touch_down_x = (int16_t)pos.x;
+  s_touch_down_y = (int16_t)pos.y;
+  ESP_LOGD(TAG, "touch down: x=%d y=%d", s_touch_down_x, s_touch_down_y);
+  (void)event;
+}
+
+static void handle_touch_up(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  lv_indev_t *indev = lv_indev_get_act();
+  lv_point_t pos;
+  int16_t dx, dy;
+  lv_dir_t dir;
+
+  if (ui == NULL || indev == NULL) {
+    return;
+  }
+
+  lv_indev_get_point(indev, &pos);
+  dx = (int16_t)pos.x - s_touch_down_x;
+  dy = (int16_t)pos.y - s_touch_down_y;
+
+  ESP_LOGI(TAG, "touch up: start=(%d,%d) end=(%d,%d) dx=%d dy=%d",
+           s_touch_down_x, s_touch_down_y, (int)pos.x, (int)pos.y, dx, dy);
+
+  /* Require minimum displacement and dominant axis */
+  if (abs(dx) < SWIPE_THRESHOLD_PX && abs(dy) < SWIPE_THRESHOLD_PX) {
+    ESP_LOGD(TAG, "swipe below threshold — ignored");
+    return;
+  }
+
+  if (abs(dx) >= abs(dy)) {
+    dir = (dx > 0) ? LV_DIR_RIGHT : LV_DIR_LEFT;
+  } else {
+    dir = (dy > 0) ? LV_DIR_BOTTOM : LV_DIR_TOP;
+  }
+
+  ESP_LOGI(TAG, "swipe detected: %s",
+           dir == LV_DIR_LEFT   ? "LEFT"  :
+           dir == LV_DIR_RIGHT  ? "RIGHT" :
+           dir == LV_DIR_TOP    ? "UP"    : "DOWN");
+
+  if (ui->rendered_shot_timer_visible) {
+    if (ui->rendered_shot_timer_dismissable) {
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_DISMISS_SHOT_TIMER, CTRL_FOCUS_TEMPERATURE);
+    }
+    return;
+  }
+
+  switch (ui->rendered_screen) {
+    case CTRL_SCREEN_MAIN:
+      if (dir == LV_DIR_LEFT) {
+        dispatch_focus_change(ui, +1);
+      } else if (dir == LV_DIR_RIGHT) {
+        dispatch_focus_change(ui, -1);
+      } else if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+      } else if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_PRESETS:
+      if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_SETUP:
+      if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_SETUP_RESET_ARM:
+    case CTRL_SCREEN_SETUP_RESET_CONFIRM:
+      if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CANCEL_SETUP_RESET, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 static void handle_setup_long_press(lv_event_t *event) {
   lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
 
@@ -542,6 +646,7 @@ static lv_obj_t *create_panel(lv_obj_t *parent, int width, int height) {
   lv_obj_set_style_shadow_width(panel, 0, 0);
   lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_flag(panel, LV_OBJ_FLAG_EVENT_BUBBLE);
   return panel;
 }
 
@@ -996,18 +1101,28 @@ esp_err_t lm_ctrl_ui_init(
   ui->rendered_screen = state->screen;
   ui->rendered_feature_mask = state->feature_mask;
 
-  ui->screen = lv_obj_create(NULL);
+  lv_obj_t *base_scr = lv_obj_create(NULL);
+  lv_obj_remove_style_all(base_scr);
+  lv_obj_set_size(base_scr, LM_CTRL_LCD_H_RES, LM_CTRL_LCD_V_RES);
+  lv_obj_set_style_bg_color(base_scr, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(base_scr, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(base_scr, LV_OBJ_FLAG_SCROLLABLE);
+
+  ui->screen = lv_obj_create(base_scr);
   lv_obj_remove_style_all(ui->screen);
-  lv_obj_set_size(ui->screen, 360, 360);
+  lv_obj_set_size(ui->screen, 480, 480);
+  lv_obj_align(ui->screen, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(ui->screen, COLOR_BG, 0);
   lv_obj_set_style_bg_opa(ui->screen, LV_OPA_COVER, 0);
   lv_obj_clear_flag(ui->screen, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(ui->screen, handle_screen_gesture, LV_EVENT_GESTURE, ui);
-  lv_scr_load(ui->screen);
+  lv_obj_add_event_cb(ui->screen, handle_touch_down, LV_EVENT_PRESSED, ui);
+  lv_obj_add_event_cb(ui->screen, handle_touch_up, LV_EVENT_RELEASED, ui);
+  lv_scr_load(base_scr);
 
   ui->ring = lv_obj_create(ui->screen);
   lv_obj_remove_style_all(ui->ring);
-  lv_obj_set_size(ui->ring, 320, 320);
+  lv_obj_set_size(ui->ring, 426, 426);
   lv_obj_center(ui->ring);
   lv_obj_set_style_radius(ui->ring, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(ui->ring, LV_OPA_TRANSP, 0);
@@ -1064,7 +1179,7 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_align(ui->page_label, LV_ALIGN_TOP_MID, 0, 46);
 
   ui->heat_arc = lv_arc_create(ui->screen);
-  lv_obj_set_size(ui->heat_arc, 328, 328);
+  lv_obj_set_size(ui->heat_arc, 437, 437);
   lv_obj_center(ui->heat_arc);
   lv_arc_set_rotation(ui->heat_arc, 270);
   lv_arc_set_bg_angles(ui->heat_arc, 0, 360);
@@ -1209,7 +1324,7 @@ esp_err_t lm_ctrl_ui_init(
   set_hidden(ui->setup_action_list, true);
 
   ui->setup_reset_arc = lv_arc_create(ui->screen);
-  lv_obj_set_size(ui->setup_reset_arc, 314, 314);
+  lv_obj_set_size(ui->setup_reset_arc, 418, 418);
   lv_obj_center(ui->setup_reset_arc);
   lv_arc_set_rotation(ui->setup_reset_arc, 270);
   lv_arc_set_bg_angles(ui->setup_reset_arc, 0, 360);

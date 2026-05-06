@@ -2,7 +2,7 @@
 dependencies:
   idf:
     version: ">=5.5.0"
-  espressif/esp_lcd_st77916: ^2.0.2
+  espressif/esp_lcd_st7701: "*"
   espressif/esp_lcd_touch_cst816s: ^1.1.1
   lvgl/lvgl: ^8.4.0
   espressif/esp_lvgl_adapter: ^0.3.0

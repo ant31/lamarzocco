@@ -23,7 +23,7 @@
 static const char *TAG = "lm_portal_routes";
 static const char *SESSION_COOKIE_NAME = "lmctrl_session";
 static const char *CSRF_HEADER_NAME = "X-CSRF-Token";
-static const int LM_CTRL_SETUP_PORTAL_HTTPD_STACK_SIZE = 12288;
+static const int LM_CTRL_SETUP_PORTAL_HTTPD_STACK_SIZE = 24576;
 
 static void write_u16_le(uint8_t *dst, uint16_t value) {
   dst[0] = (uint8_t)(value & 0xffU);

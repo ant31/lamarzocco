@@ -42,12 +42,17 @@ static lm_ctrl_led_rgb_t color_for_status(lm_ctrl_led_status_t status) {
 }
 
 static int wrap_index(int index) {
+#if LM_CTRL_LED_RING_COUNT > 0
   const int count = LM_CTRL_LED_RING_COUNT;
   int wrapped = index % count;
   if (wrapped < 0) {
     wrapped += count;
   }
   return wrapped;
+#else
+  (void)index;
+  return 0;
+#endif
 }
 
 static esp_err_t render_leds(void) {
@@ -81,6 +86,11 @@ static esp_err_t render_leds(void) {
 }
 
 esp_err_t lm_ctrl_leds_init(void) {
+  if (LM_CTRL_LED_RING_COUNT <= 0 || LM_CTRL_LED_RING_GPIO < 0) {
+    ESP_LOGI(TAG, "LED ring disabled by hardware config");
+    return ESP_OK;
+  }
+
   led_strip_config_t strip_config = {
     .strip_gpio_num = LM_CTRL_LED_RING_GPIO,
     .max_leds = LM_CTRL_LED_RING_COUNT,
@@ -172,6 +182,8 @@ esp_err_t lm_ctrl_leds_prepare_for_reset(void) {
   s_status = LM_CTRL_LED_STATUS_IDLE;
   s_motion_index = 0;
   s_motion_until_us = 0;
-  ESP_RETURN_ON_ERROR(gpio_reset_pin(LM_CTRL_LED_RING_GPIO), TAG, "Failed to reset LED GPIO");
+  if (LM_CTRL_LED_RING_GPIO >= 0) {
+    ESP_RETURN_ON_ERROR(gpio_reset_pin(LM_CTRL_LED_RING_GPIO), TAG, "Failed to reset LED GPIO");
+  }
   return ESP_OK;
 }

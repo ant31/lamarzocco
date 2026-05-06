@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define LV_COLOR_DEPTH 32
+#define LV_COLOR_DEPTH 16
 #define LV_COLOR_SCREEN_TRANSP 0
 #define LV_COLOR_CHROMA_KEY lv_color_hex(0x00ff00)
 

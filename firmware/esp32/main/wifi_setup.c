@@ -388,7 +388,7 @@ static esp_err_t ensure_portal_password(void) {
 
 esp_err_t lm_ctrl_wifi_store_credentials(const char *ssid, const char *password, const char *hostname, ctrl_language_t language) {
   esp_err_t ret = lm_ctrl_settings_save_wifi_credentials(ssid, password, hostname, language);
-
+  
   if (ret == ESP_OK) {
     if (s_state.sta_netif != NULL) {
       esp_netif_set_hostname(s_state.sta_netif, hostname[0] != '\0' ? hostname : LM_CTRL_WIFI_DEFAULT_HOSTNAME);
@@ -509,6 +509,14 @@ static esp_err_t configure_ap(void) {
 
   ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "Failed to set Wi-Fi mode for AP");
   ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_config), TAG, "Failed to configure setup AP");
+
+  ESP_LOGW(TAG, "=================================================");
+  ESP_LOGW(TAG, "SETUP AP CREDENTIALS");
+  ESP_LOGW(TAG, "SSID:     %s", portal_ssid);
+  ESP_LOGW(TAG, "PASSWORD: %s", portal_password);
+  ESP_LOGW(TAG, "IP:       192.168.4.1");
+  ESP_LOGW(TAG, "=================================================");
+
   return ESP_OK;
 }
 
