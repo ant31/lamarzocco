@@ -515,8 +515,9 @@ static void dispatch_action(lv_event_t *event) {
   binding->ui->action_cb(binding->action, binding->focus, binding->ui->action_user_data);
 }
 
-/* Forward declaration — defined later in the file. */
+/* Forward declarations — defined later in the file. */
 static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta);
+static void render_settings_screen(lm_ctrl_ui_t *ui);
 
 /* Manual swipe detection — mirrors the Elecrow factory demo approach.
  * LVGL gesture events never fire reliably on the CST820 because the chip
