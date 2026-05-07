@@ -148,6 +148,18 @@ void app_main(void) {
 
   lm_ctrl_runtime_init(&runtime);
   lm_ctrl_runtime_bootstrap(&runtime);
+
+  /* Auto-connect to the previously selected machine on boot.
+   * lm_ctrl_settings_load() already restored the machine binding from NVS;
+   * we just need to kick the worker so it starts syncing without requiring
+   * the user to click "use selected machine" in the web portal. */
+  if (lm_ctrl_settings_get_effective_selected_machine(NULL)) {
+    ESP_LOGI(TAG, "Persisted machine selection found — requesting auto-sync");
+    lm_ctrl_machine_link_request_sync();
+  } else {
+    ESP_LOGI(TAG, "No persisted machine selection — waiting for user to select via portal");
+  }
+
   lm_ctrl_runtime_build_ui_view(&runtime, &ui_view);
 
   ESP_ERROR_CHECK(esp_lv_adapter_lock(-1));
