@@ -504,10 +504,91 @@ static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta);
  * LVGL's internal gesture distance accumulator to cross its threshold.
  * Instead we record the finger-down position and compare it to the
  * finger-up position; a 50 px delta in the dominant axis is a swipe. */
-#define SWIPE_THRESHOLD_PX 50
+#define SWIPE_THRESHOLD_PX 30   /* lowered from 50 — easier vertical swipes */
+
+/* Tap-zone strip width/height in pixels.  These invisible overlays sit on
+ * the four edges of the screen and dispatch navigation on a plain tap so
+ * the user does not need to swipe a full threshold distance. */
+#define TAP_ZONE_SIZE 60
 
 static int16_t s_touch_down_x = 0;
 static int16_t s_touch_down_y = 0;
+
+/* Tap-zone callback — each invisible edge strip carries the desired direction
+ * as its user_data (cast from lv_dir_t). */
+static void handle_tap_zone(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  /* Direction is encoded in the object's user_data set at creation time.
+   * We re-use the same dispatch logic as handle_touch_up. */
+  lv_dir_t dir = (lv_dir_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(event));
+
+  if (ui == NULL) {
+    return;
+  }
+
+  ESP_LOGI(TAG, "tap zone: %s",
+           dir == LV_DIR_LEFT   ? "LEFT"  :
+           dir == LV_DIR_RIGHT  ? "RIGHT" :
+           dir == LV_DIR_TOP    ? "UP"    : "DOWN");
+
+  if (ui->rendered_shot_timer_visible) {
+    if (ui->rendered_shot_timer_dismissable) {
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_DISMISS_SHOT_TIMER, CTRL_FOCUS_TEMPERATURE);
+    }
+    return;
+  }
+
+  switch (ui->rendered_screen) {
+    case CTRL_SCREEN_MAIN:
+      if (dir == LV_DIR_LEFT) {
+        dispatch_focus_change(ui, +1);
+      } else if (dir == LV_DIR_RIGHT) {
+        dispatch_focus_change(ui, -1);
+      } else if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+      } else if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_PRESETS:
+      if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_SETUP:
+      if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_SETUP_RESET_ARM:
+    case CTRL_SCREEN_SETUP_RESET_CONFIRM:
+      if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CANCEL_SETUP_RESET, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+/* Create one invisible tap-zone strip and attach the tap callback.
+ * dir is stored as user_data on the object so the single callback
+ * can know which edge was tapped. */
+static lv_obj_t *create_tap_zone(lv_obj_t *parent, lm_ctrl_ui_t *ui,
+                                  lv_dir_t dir, int w, int h,
+                                  lv_align_t align) {
+  lv_obj_t *zone = lv_obj_create(parent);
+  lv_obj_remove_style_all(zone);
+  lv_obj_set_size(zone, w, h);
+  lv_obj_align(zone, align, 0, 0);
+  lv_obj_set_style_bg_opa(zone, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(zone, 0, 0);
+  lv_obj_clear_flag(zone, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_user_data(zone, (void *)(uintptr_t)dir);
+  lv_obj_add_event_cb(zone, handle_tap_zone, LV_EVENT_CLICKED, ui);
+  lv_obj_add_flag(zone, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  return zone;
+}
 
 static void handle_touch_down(lv_event_t *event) {
   lv_indev_t *indev = lv_indev_get_act();
@@ -1118,6 +1199,21 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_add_event_cb(ui->screen, handle_screen_gesture, LV_EVENT_GESTURE, ui);
   lv_obj_add_event_cb(ui->screen, handle_touch_down, LV_EVENT_PRESSED, ui);
   lv_obj_add_event_cb(ui->screen, handle_touch_up, LV_EVENT_RELEASED, ui);
+
+  /* Invisible tap-zone strips on each edge.
+   * Top / Bottom: full width × TAP_ZONE_SIZE px.
+   * Left / Right: TAP_ZONE_SIZE px × remaining height (minus corners). */
+  create_tap_zone(ui->screen, ui, LV_DIR_TOP,
+                  LM_CTRL_LCD_H_RES, TAP_ZONE_SIZE, LV_ALIGN_TOP_MID);
+  create_tap_zone(ui->screen, ui, LV_DIR_BOTTOM,
+                  LM_CTRL_LCD_H_RES, TAP_ZONE_SIZE, LV_ALIGN_BOTTOM_MID);
+  create_tap_zone(ui->screen, ui, LV_DIR_LEFT,
+                  TAP_ZONE_SIZE, LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_SIZE,
+                  LV_ALIGN_LEFT_MID);
+  create_tap_zone(ui->screen, ui, LV_DIR_RIGHT,
+                  TAP_ZONE_SIZE, LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_SIZE,
+                  LV_ALIGN_RIGHT_MID);
+
   lv_scr_load(base_scr);
 
   ui->ring = lv_obj_create(ui->screen);

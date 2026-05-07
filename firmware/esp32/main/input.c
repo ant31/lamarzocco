@@ -13,8 +13,7 @@
 
 static const char *TAG = "lm_input";
 
-#define LM_CTRL_KNOB_POLL_INTERVAL_US   3000
-#define LM_CTRL_KNOB_DEBOUNCE_TICKS     2
+#define LM_CTRL_KNOB_POLL_INTERVAL_US   1000      /* 1 ms — quadrature needs fast sampling */
 #define LM_CTRL_BTN_POLL_INTERVAL_US    50000     /* 50 ms */
 #define LM_CTRL_BTN_DEBOUNCE_TICKS      3         /* 3 × 50 ms = 150 ms */
 #define LM_CTRL_PCF8574_ADDR            0x21
@@ -137,11 +136,31 @@ static void btn_poll_cb(void *arg) {
 }
 
 #if LM_CTRL_ENCODER_ENABLED
-static uint8_t s_encoder_a_level = 1;
-static uint8_t s_encoder_b_level = 1;
-static uint8_t s_debounce_a_cnt = 0;
-static uint8_t s_debounce_b_cnt = 0;
-static int s_count_value = 0;
+/* Quadrature encoder state machine.
+ *
+ * The two channels are read together on every poll tick and combined into a
+ * 2-bit gray-code state.  A full-step transition table maps the (prev, curr)
+ * state pair to a direction so each physical detent produces exactly one
+ * +1 or -1 event regardless of how fast the ring is turned.
+ *
+ * Treating A and B as independent counters (the old approach) fires both a
+ * +1 from A and a -1 from B on every detent, causing the oscillation seen in
+ * the logs (preset bouncing 3↔4 continuously). */
+
+/* Gray-code states: bit1=A, bit0=B */
+static uint8_t s_quad_state = 0;  /* last valid 2-bit state */
+static int     s_count_value = 0;
+static int8_t  s_half_step_accum = 0; /* accumulates ±1 per transition; fires at ±2 */
+
+/* Full-step transition table [prev_state][curr_state] → direction
+ * +1 = CW, -1 = CCW, 0 = invalid/bounce */
+static const int8_t s_quad_table[4][4] = {
+  /* curr: 00  01  10  11 */
+  /* 00 */ {  0, -1, +1,  0 },
+  /* 01 */ { +1,  0,  0, -1 },
+  /* 10 */ { -1,  0,  0, +1 },
+  /* 11 */ {  0, +1, -1,  0 },
+};
 
 static void push_event(lm_ctrl_input_event_type_t type, int delta_steps) {
   if (s_event_queue == NULL) {
@@ -149,45 +168,45 @@ static void push_event(lm_ctrl_input_event_type_t type, int delta_steps) {
   }
 
   const lm_ctrl_input_event_t event = {
-    .type = type,
+    .type        = type,
     .delta_steps = delta_steps,
-    .focus = CTRL_FOCUS_TEMPERATURE,
+    .focus       = CTRL_FOCUS_TEMPERATURE,
   };
   if (xQueueSend(s_event_queue, &event, 0) != pdTRUE) {
     ESP_LOGW(TAG, "Input queue full, dropping event type=%d", (int)type);
   }
 }
 
-static void process_knob_channel(uint8_t current_level, uint8_t *prev_level, uint8_t *debounce_cnt, int delta_steps) {
-  if (current_level == 0) {
-    if (current_level != *prev_level) {
-      *debounce_cnt = 0;
-    } else {
-      (*debounce_cnt)++;
-    }
-  } else {
-    if (current_level != *prev_level && ++(*debounce_cnt) >= LM_CTRL_KNOB_DEBOUNCE_TICKS) {
-      *debounce_cnt = 0;
-      const int adjusted_delta = delta_steps * LM_CTRL_KNOB_DIRECTION;
-      s_count_value += adjusted_delta;
-      push_event(LM_CTRL_EVENT_ROTATE, adjusted_delta);
-      ESP_LOGD(TAG, "Ring step delta=%d count=%d levels=(%u,%u)", adjusted_delta, s_count_value, s_encoder_a_level, s_encoder_b_level);
-    } else {
-      *debounce_cnt = 0;
-    }
-  }
-
-  *prev_level = current_level;
-}
-
 static void knob_poll_cb(void *arg) {
   (void)arg;
 
-  const uint8_t pha_value = (uint8_t)gpio_get_level(LM_CTRL_KNOB_A);
-  const uint8_t phb_value = (uint8_t)gpio_get_level(LM_CTRL_KNOB_B);
+  const uint8_t a = (uint8_t)gpio_get_level(LM_CTRL_KNOB_A);
+  const uint8_t b = (uint8_t)gpio_get_level(LM_CTRL_KNOB_B);
+  const uint8_t curr_state = (uint8_t)((a << 1) | b);
 
-  process_knob_channel(pha_value, &s_encoder_a_level, &s_debounce_a_cnt, +1);
-  process_knob_channel(phb_value, &s_encoder_b_level, &s_debounce_b_cnt, -1);
+  if (curr_state == s_quad_state) {
+    return; /* no change */
+  }
+
+  const int8_t dir = s_quad_table[s_quad_state][curr_state];
+  s_quad_state = curr_state;
+
+  if (dir == 0) {
+    return; /* illegal transition — bounce, ignore */
+  }
+
+  /* Each physical detent on this encoder produces 2 electrical transitions.
+   * Accumulate until we have a full detent (±2 half-steps) before firing. */
+  s_half_step_accum += dir;
+  if (s_half_step_accum == 2 || s_half_step_accum == -2) {
+    const int adjusted_delta = (s_half_step_accum > 0 ? +1 : -1) * LM_CTRL_KNOB_DIRECTION;
+    s_half_step_accum = 0;
+    s_count_value += adjusted_delta;
+    ESP_LOGD(TAG, "Ring detent delta=%d count=%d state=%u", adjusted_delta, s_count_value, curr_state);
+    push_event(LM_CTRL_EVENT_ROTATE, adjusted_delta);
+  } else {
+    ESP_LOGD(TAG, "Ring half-step accum=%d state=%u", s_half_step_accum, curr_state);
+  }
 }
 
 static esp_err_t init_knob_gpio(gpio_num_t gpio_num) {
@@ -212,14 +231,15 @@ esp_err_t lm_ctrl_input_init(QueueHandle_t event_queue) {
 
   s_event_queue = event_queue;
   s_count_value = 0;
-  s_debounce_a_cnt = 0;
-  s_debounce_b_cnt = 0;
 
   ESP_RETURN_ON_ERROR(init_knob_gpio(LM_CTRL_KNOB_A), TAG, "Encoder A gpio init failed");
   ESP_RETURN_ON_ERROR(init_knob_gpio(LM_CTRL_KNOB_B), TAG, "Encoder B gpio init failed");
 
-  s_encoder_a_level = (uint8_t)gpio_get_level(LM_CTRL_KNOB_A);
-  s_encoder_b_level = (uint8_t)gpio_get_level(LM_CTRL_KNOB_B);
+  /* Seed the quadrature state machine from the current pin levels so the
+   * first transition is decoded correctly without a spurious step. */
+  s_quad_state = (uint8_t)(((uint8_t)gpio_get_level(LM_CTRL_KNOB_A) << 1) |
+                             (uint8_t)gpio_get_level(LM_CTRL_KNOB_B));
+  s_half_step_accum = 0;
 
   const esp_timer_create_args_t knob_timer_args = {
     .callback = knob_poll_cb,
