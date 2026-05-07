@@ -14,7 +14,9 @@
 #include "extra/libs/qrcode/lv_qrcode.h"
 #include "lm_ctrl_fonts.h"
 #include "board_config.h"
+#include "board_backlight.h"
 #include "machine_link_types.h"
+#include "ui_theme.h"
 
 static const char *TAG = "lm_ui";
 static const char *TITLE_TEXT = "la marzocco";
@@ -56,6 +58,11 @@ enum {
   BIND_BACKFLUSH_START,
   BIND_BACKFLUSH_CLOSE,
   BIND_CONFIRM_VALUE,
+  BIND_SETTINGS_THEME_PREV,
+  BIND_SETTINGS_THEME_NEXT,
+  BIND_SETTINGS_BL_DOWN,
+  BIND_SETTINGS_BL_UP,
+  BIND_SETTINGS_RESET,
 };
 
 static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
@@ -597,12 +604,26 @@ static void handle_tap_zone(lv_event_t *event) {
     return;
   }
 
+  /* Settings overlay — handled entirely in the UI layer */
+  if (ui->rendered_settings_visible) {
+    if (dir == LV_DIR_BOTTOM) {
+      /* swipe down from settings → open setup */
+      ui->rendered_settings_visible = false;
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+    } else if (dir == LV_DIR_TOP) {
+      /* swipe up from settings → back to main */
+      ui->rendered_settings_visible = false;
+      set_hidden(ui->settings_card, true);
+    }
+    return;
+  }
+
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       /* LEFT edge  → previous page (right=-1 means go back)
        * RIGHT edge → next page
        * TOP edge   → presets (finger coming from top = reaching down)
-       * BOTTOM edge→ setup   (finger coming from bottom = reaching up) */
+       * BOTTOM edge→ settings (finger coming from bottom = reaching up) */
       if (dir == LV_DIR_LEFT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_RIGHT) {
@@ -610,7 +631,8 @@ static void handle_tap_zone(lv_event_t *event) {
       } else if (dir == LV_DIR_TOP) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
       } else if (dir == LV_DIR_BOTTOM) {
-        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+        ui->rendered_settings_visible = true;
+        render_settings_screen(ui);
       }
       break;
     case CTRL_SCREEN_PRESETS:
@@ -714,10 +736,24 @@ static void handle_touch_up(lv_event_t *event) {
     return;
   }
 
+  /* Settings overlay — handled entirely in the UI layer */
+  if (ui->rendered_settings_visible) {
+    if (dir == LV_DIR_TOP) {
+      /* swipe up from settings → open setup */
+      ui->rendered_settings_visible = false;
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+    } else if (dir == LV_DIR_BOTTOM) {
+      /* swipe down from settings → back to main */
+      ui->rendered_settings_visible = false;
+      set_hidden(ui->settings_card, true);
+    }
+    return;
+  }
+
   /* Swipe direction convention:
    * LEFT  (dx<0, finger moves left)  → next page
    * RIGHT (dx>0, finger moves right) → previous page
-   * TOP   (dy<0, finger moves up)    → open setup
+   * TOP   (dy<0, finger moves up)    → settings
    * BOTTOM(dy>0, finger moves down)  → open presets */
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
@@ -726,7 +762,8 @@ static void handle_touch_up(lv_event_t *event) {
       } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_TOP) {
-        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+        ui->rendered_settings_visible = true;
+        render_settings_screen(ui);
       } else if (dir == LV_DIR_BOTTOM) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
       }
@@ -931,6 +968,19 @@ static void handle_screen_gesture(lv_event_t *event) {
     return;
   }
 
+  if (ui->rendered_settings_visible) {
+    if (dir == LV_DIR_TOP) {
+      ui->rendered_settings_visible = false;
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+      lv_indev_wait_release(indev);
+    } else if (dir == LV_DIR_BOTTOM) {
+      ui->rendered_settings_visible = false;
+      set_hidden(ui->settings_card, true);
+      lv_indev_wait_release(indev);
+    }
+    return;
+  }
+
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
@@ -938,7 +988,10 @@ static void handle_screen_gesture(lv_event_t *event) {
       } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_TOP) {
-        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+        ui->rendered_settings_visible = true;
+        render_settings_screen(ui);
+        lv_indev_wait_release(indev);
+        return;
       } else if (dir == LV_DIR_BOTTOM) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
       } else {
@@ -969,6 +1022,97 @@ static void handle_screen_gesture(lv_event_t *event) {
   }
 
   lv_indev_wait_release(indev);
+}
+
+static void render_settings_screen(lm_ctrl_ui_t *ui) {
+  if (ui == NULL) {
+    return;
+  }
+
+  const lm_ctrl_ui_theme_t *theme = ui_theme_get(ui->settings_theme_index);
+
+  set_hidden(ui->main_card, true);
+  set_hidden(ui->presets_card, true);
+  set_hidden(ui->setup_card, true);
+  set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, true);
+  set_hidden(ui->setup_reset_arc, true);
+  set_hidden(ui->heat_arc, true);
+  set_hidden(ui->page_label, true);
+  set_hidden(ui->setup_secondary_button, true);
+  set_hidden(ui->setup_primary_button, true);
+  set_hidden(ui->power_left_button, true);
+  set_hidden(ui->power_right_button, true);
+  set_hidden(ui->power_hint, true);
+  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+    set_hidden(ui->page_dots[i], true);
+  }
+
+  set_hidden(ui->settings_card, false);
+  lv_obj_move_foreground(ui->settings_card);
+
+  set_label_text(ui->settings_title, "Settings", COLOR_ACTIVE);
+  set_label_text(ui->settings_theme_label, "Theme", COLOR_MUTED);
+  set_label_text(ui->settings_theme_name, theme->name, COLOR_TEXT);
+
+  /* Brightness indicators — filled up to the current level */
+  for (uint8_t i = 0; i < 5; ++i) {
+    const bool active = i <= ui->settings_backlight_level;
+    lv_obj_set_style_bg_color(ui->settings_bl_indicators[i], active ? COLOR_ACTIVE : COLOR_BUTTON, 0);
+    lv_obj_set_style_bg_opa(ui->settings_bl_indicators[i], active ? LV_OPA_COVER : LV_OPA_50, 0);
+  }
+
+  set_label_text(ui->settings_bl_label, "Brightness", COLOR_MUTED);
+}
+
+static void handle_settings_theme_prev(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  if (ui == NULL) return;
+  if (ui->settings_theme_index == 0) {
+    ui->settings_theme_index = LM_CTRL_UI_THEME_COUNT - 1;
+  } else {
+    ui->settings_theme_index--;
+  }
+  ui_theme_apply(ui->settings_theme_index, ui->screen);
+  render_settings_screen(ui);
+}
+
+static void handle_settings_theme_next(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  if (ui == NULL) return;
+  ui->settings_theme_index = (uint8_t)((ui->settings_theme_index + 1) % LM_CTRL_UI_THEME_COUNT);
+  ui_theme_apply(ui->settings_theme_index, ui->screen);
+  render_settings_screen(ui);
+}
+
+static void handle_settings_bl_down(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  if (ui == NULL) return;
+  if (ui->settings_backlight_level > 0) {
+    ui->settings_backlight_level--;
+    lm_ctrl_backlight_set_level(ui->settings_backlight_level);
+  }
+  render_settings_screen(ui);
+}
+
+static void handle_settings_bl_up(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  if (ui == NULL) return;
+  if (ui->settings_backlight_level < 4) {
+    ui->settings_backlight_level++;
+    lm_ctrl_backlight_set_level(ui->settings_backlight_level);
+  }
+  render_settings_screen(ui);
+}
+
+static void handle_settings_reset(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+  if (ui == NULL) return;
+  ui->settings_theme_index = 0;
+  ui->settings_backlight_level = 4;
+  ui_theme_apply(ui->settings_theme_index, ui->screen);
+  lm_ctrl_backlight_set_level(ui->settings_backlight_level);
+  render_settings_screen(ui);
 }
 
 static void render_main_screen(
@@ -1662,6 +1806,114 @@ esp_err_t lm_ctrl_ui_init(
   set_hidden(ui->setup_secondary_button, true);
   set_hidden(ui->setup_primary_button, true);
 
+  /* Settings overlay card */
+  ui->settings_card = create_panel(ui->screen, 300, 280);
+  lv_obj_set_style_bg_color(ui->settings_card, COLOR_BG, 0);
+  lv_obj_set_style_bg_opa(ui->settings_card, LV_OPA_COVER, 0);
+
+  ui->settings_title = lv_label_create(ui->settings_card);
+  lv_obj_set_style_text_font(ui->settings_title, UI_FONT_20, 0);
+  lv_obj_set_style_text_align(ui->settings_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(ui->settings_title, LV_ALIGN_TOP_MID, 0, 8);
+
+  /* Theme row */
+  ui->settings_theme_label = lv_label_create(ui->settings_card);
+  lv_obj_set_style_text_font(ui->settings_theme_label, UI_FONT_14, 0);
+  lv_obj_align(ui->settings_theme_label, LV_ALIGN_TOP_MID, 0, 44);
+
+  ui->settings_theme_prev = lv_btn_create(ui->settings_card);
+  lv_obj_set_size(ui->settings_theme_prev, 40, 36);
+  lv_obj_align(ui->settings_theme_prev, LV_ALIGN_TOP_MID, -70, 62);
+  lv_obj_set_style_radius(ui->settings_theme_prev, 10, 0);
+  lv_obj_set_style_bg_color(ui->settings_theme_prev, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->settings_theme_prev, 0, 0);
+  lv_obj_add_event_cb(ui->settings_theme_prev, handle_settings_theme_prev, LV_EVENT_CLICKED, ui);
+  ui->settings_theme_prev_label = lv_label_create(ui->settings_theme_prev);
+  lv_label_set_text(ui->settings_theme_prev_label, "<");
+  lv_obj_set_style_text_color(ui->settings_theme_prev_label, COLOR_TEXT, 0);
+  lv_obj_center(ui->settings_theme_prev_label);
+
+  ui->settings_theme_name = lv_label_create(ui->settings_card);
+  lv_obj_set_style_text_font(ui->settings_theme_name, UI_FONT_16, 0);
+  lv_obj_set_style_text_align(ui->settings_theme_name, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->settings_theme_name, 100);
+  lv_obj_align(ui->settings_theme_name, LV_ALIGN_TOP_MID, 0, 72);
+
+  ui->settings_theme_next = lv_btn_create(ui->settings_card);
+  lv_obj_set_size(ui->settings_theme_next, 40, 36);
+  lv_obj_align(ui->settings_theme_next, LV_ALIGN_TOP_MID, 70, 62);
+  lv_obj_set_style_radius(ui->settings_theme_next, 10, 0);
+  lv_obj_set_style_bg_color(ui->settings_theme_next, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->settings_theme_next, 0, 0);
+  lv_obj_add_event_cb(ui->settings_theme_next, handle_settings_theme_next, LV_EVENT_CLICKED, ui);
+  ui->settings_theme_next_label = lv_label_create(ui->settings_theme_next);
+  lv_label_set_text(ui->settings_theme_next_label, ">");
+  lv_obj_set_style_text_color(ui->settings_theme_next_label, COLOR_TEXT, 0);
+  lv_obj_center(ui->settings_theme_next_label);
+
+  /* Brightness row */
+  ui->settings_bl_label = lv_label_create(ui->settings_card);
+  lv_obj_set_style_text_font(ui->settings_bl_label, UI_FONT_14, 0);
+  lv_obj_align(ui->settings_bl_label, LV_ALIGN_TOP_MID, 0, 116);
+
+  ui->settings_bl_down = lv_btn_create(ui->settings_card);
+  lv_obj_set_size(ui->settings_bl_down, 40, 36);
+  lv_obj_align(ui->settings_bl_down, LV_ALIGN_TOP_MID, -80, 136);
+  lv_obj_set_style_radius(ui->settings_bl_down, 10, 0);
+  lv_obj_set_style_bg_color(ui->settings_bl_down, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->settings_bl_down, 0, 0);
+  lv_obj_add_event_cb(ui->settings_bl_down, handle_settings_bl_down, LV_EVENT_CLICKED, ui);
+  ui->settings_bl_down_label = lv_label_create(ui->settings_bl_down);
+  lv_label_set_text(ui->settings_bl_down_label, "-");
+  lv_obj_set_style_text_color(ui->settings_bl_down_label, COLOR_TEXT, 0);
+  lv_obj_set_style_text_font(ui->settings_bl_down_label, UI_FONT_20, 0);
+  lv_obj_center(ui->settings_bl_down_label);
+
+  for (uint8_t i = 0; i < 5; ++i) {
+    ui->settings_bl_indicators[i] = lv_obj_create(ui->settings_card);
+    lv_obj_remove_style_all(ui->settings_bl_indicators[i]);
+    lv_obj_set_size(ui->settings_bl_indicators[i], 18, 18);
+    lv_obj_set_style_radius(ui->settings_bl_indicators[i], LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ui->settings_bl_indicators[i], 1, 0);
+    lv_obj_set_style_border_color(ui->settings_bl_indicators[i], COLOR_RING, 0);
+    lv_obj_align(ui->settings_bl_indicators[i], LV_ALIGN_TOP_MID,
+                 ((int)i * 22) - 44, 144);
+  }
+
+  ui->settings_bl_up = lv_btn_create(ui->settings_card);
+  lv_obj_set_size(ui->settings_bl_up, 40, 36);
+  lv_obj_align(ui->settings_bl_up, LV_ALIGN_TOP_MID, 80, 136);
+  lv_obj_set_style_radius(ui->settings_bl_up, 10, 0);
+  lv_obj_set_style_bg_color(ui->settings_bl_up, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->settings_bl_up, 0, 0);
+  lv_obj_add_event_cb(ui->settings_bl_up, handle_settings_bl_up, LV_EVENT_CLICKED, ui);
+  ui->settings_bl_up_label = lv_label_create(ui->settings_bl_up);
+  lv_label_set_text(ui->settings_bl_up_label, "+");
+  lv_obj_set_style_text_color(ui->settings_bl_up_label, COLOR_TEXT, 0);
+  lv_obj_set_style_text_font(ui->settings_bl_up_label, UI_FONT_20, 0);
+  lv_obj_center(ui->settings_bl_up_label);
+
+  /* Reset button */
+  ui->settings_reset_button = create_button(ui->settings_card, 120, 38, 0, 92, &ui->settings_reset_label);
+  lv_obj_set_style_bg_color(ui->settings_reset_button, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->settings_reset_button, 0, 0);
+  lv_obj_set_style_border_width(ui->settings_reset_button, 1, 0);
+  lv_obj_set_style_border_color(ui->settings_reset_button, COLOR_RING, 0);
+  lv_label_set_text(ui->settings_reset_label, "Reset defaults");
+  lv_obj_set_style_text_color(ui->settings_reset_label, COLOR_MUTED, 0);
+  lv_obj_add_event_cb(ui->settings_reset_button, handle_settings_reset, LV_EVENT_CLICKED, ui);
+
+  set_hidden(ui->settings_card, true);
+
+  /* Seed settings state from the controller state passed to init */
+  ui->settings_theme_index = state->theme_index < LM_CTRL_UI_THEME_COUNT ? state->theme_index : 0;
+  /* Default to full brightness (level 4) when the stored value is 0 and theme is
+   * also 0 — that indicates a first-boot / uninitialized state. */
+  ui->settings_backlight_level = (state->backlight_level == 0 && state->theme_index == 0)
+    ? 4
+    : (state->backlight_level < 5 ? state->backlight_level : 4);
+  ui->rendered_settings_visible = false;
+
   for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
     ui->page_dots[i] = lv_obj_create(ui->screen);
     lv_obj_remove_style_all(ui->page_dots[i]);
@@ -1727,6 +1979,18 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
   ui->rendered_shot_timer_visible = view != NULL && view->shot_timer_visible;
   ui->rendered_shot_timer_dismissable = view != NULL && view->shot_timer_dismissable;
   ui->rendered_backflush_visible = view != NULL && view->backflush_visible;
+
+  /* If the settings overlay is active, keep it rendered and skip the rest */
+  if (ui->rendered_settings_visible) {
+    render_settings_screen(ui);
+    render_title(ui, view);
+    render_connection_icons(ui, view);
+    return;
+  }
+
+  /* Ensure settings card is hidden when not in settings mode */
+  set_hidden(ui->settings_card, true);
+
   render_title(ui, view);
 
   if (ui->rendered_shot_timer_visible) {

@@ -10,3 +10,5 @@ esp_err_t lm_ctrl_backlight_set(int brightness_percent);
 esp_err_t lm_ctrl_backlight_on(void);
 /** Turn the display backlight fully off. */
 esp_err_t lm_ctrl_backlight_off(void);
+/** Set the display backlight to one of five discrete levels (0 = off … 4 = full). */
+esp_err_t lm_ctrl_backlight_set_level(uint8_t level_0_to_4);

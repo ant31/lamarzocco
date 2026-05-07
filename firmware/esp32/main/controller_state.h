@@ -118,6 +118,7 @@ typedef enum {
   CTRL_SCREEN_SETUP,
   CTRL_SCREEN_SETUP_RESET_ARM,
   CTRL_SCREEN_SETUP_RESET_CONFIRM,
+  CTRL_SCREEN_SETTINGS,
 } ctrl_screen_t;
 
 /** Recovery actions exposed after the hidden setup reset gesture has been armed. */
@@ -159,6 +160,8 @@ typedef struct {
   float time_step_s;
   uint8_t reset_progress;
   ctrl_recovery_action_t recovery_action;
+  uint8_t theme_index;
+  uint8_t backlight_level;
 } ctrl_state_t;
 
 /** Actions emitted by the state machine for status text and side effects. */

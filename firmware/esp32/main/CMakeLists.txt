@@ -36,6 +36,7 @@ idf_component_register(
     "setup_portal_routes.c"
     "setup_portal_routes_shared.c"
     "storage_security.c"
+    "ui_theme.c"
     "wifi_setup.c"
     "wifi_reconnect_policy.c"
   INCLUDE_DIRS

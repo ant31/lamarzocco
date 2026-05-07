@@ -28,6 +28,11 @@ extern "C" {
 #define LM_CTRL_WIFI_KEY_INSTALL_REG "install_reg"
 #define LM_CTRL_WIFI_DEFAULT_HOSTNAME "lm-controller"
 
+/* UI preferences */
+#define LM_CTRL_PREF_NAMESPACE "ui_pref"
+#define LM_CTRL_PREF_KEY_UI_THEME "ui_theme"
+#define LM_CTRL_PREF_KEY_BACKLIGHT "backlight_lvl"
+
 #ifdef __cplusplus
 }
 #endif

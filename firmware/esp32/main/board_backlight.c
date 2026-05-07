@@ -49,6 +49,22 @@ esp_err_t lm_ctrl_backlight_set(int brightness_percent) {
   return ESP_OK;
 }
 
+/* Maps discrete level 0-4 to an 8-bit PWM value, then scales to the 10-bit
+ * duty counter used by the existing LEDC channel. */
+static const uint8_t k_backlight_levels[5] = { 0, 64, 128, 192, 255 };
+
+esp_err_t lm_ctrl_backlight_set_level(uint8_t level_0_to_4) {
+  if (level_0_to_4 > 4) {
+    level_0_to_4 = 4;
+  }
+  /* Scale 8-bit value to 10-bit duty (0-1023) */
+  const uint32_t duty = ((uint32_t)k_backlight_levels[level_0_to_4] * 1023U) / 255U;
+  ESP_LOGI(TAG, "LCD backlight level %u (duty %lu)", (unsigned)level_0_to_4, (unsigned long)duty);
+  ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LM_CTRL_BACKLIGHT_CHANNEL, duty));
+  ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LM_CTRL_BACKLIGHT_CHANNEL));
+  return ESP_OK;
+}
+
 esp_err_t lm_ctrl_backlight_on(void) {
   return lm_ctrl_backlight_set(95);
 }

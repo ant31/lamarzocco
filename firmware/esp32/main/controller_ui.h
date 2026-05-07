@@ -10,7 +10,7 @@
  *  The last slot is always the Backflush page. */
 #define LM_CTRL_UI_MAIN_PAGE_COUNT 9
 /** Maximum number of touch bindings stored for button-like actions. */
-#define LM_CTRL_UI_BINDING_COUNT 9
+#define LM_CTRL_UI_BINDING_COUNT 14
 /** Maximum setup status text length passed into the UI view model. */
 #define LM_CTRL_UI_STATUS_TEXT_LEN 256
 /** Maximum setup QR payload length passed into the UI view model. */
@@ -62,6 +62,7 @@ typedef enum {
   LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH,
   LM_CTRL_UI_ACTION_START_BACKFLUSH,
   LM_CTRL_UI_ACTION_CONFIRM_VALUE,
+  LM_CTRL_UI_ACTION_OPEN_SETTINGS,
 } lm_ctrl_ui_action_t;
 
 /** Callback invoked when the UI needs the main loop to handle a touch action. */
@@ -140,6 +141,29 @@ struct lm_ctrl_ui_s {
   lv_obj_t *backflush_hint;
   lv_obj_t *backflush_start_button;
   lv_obj_t *backflush_start_label;
+
+  /* Settings screen */
+  lv_obj_t *settings_card;
+  lv_obj_t *settings_title;
+  lv_obj_t *settings_theme_label;
+  lv_obj_t *settings_theme_name;
+  lv_obj_t *settings_theme_prev;
+  lv_obj_t *settings_theme_prev_label;
+  lv_obj_t *settings_theme_next;
+  lv_obj_t *settings_theme_next_label;
+  lv_obj_t *settings_bl_label;
+  lv_obj_t *settings_bl_indicators[5];
+  lv_obj_t *settings_bl_down;
+  lv_obj_t *settings_bl_down_label;
+  lv_obj_t *settings_bl_up;
+  lv_obj_t *settings_bl_up_label;
+  lv_obj_t *settings_reset_button;
+  lv_obj_t *settings_reset_label;
+
+  bool rendered_settings_visible;
+  uint8_t settings_theme_index;
+  uint8_t settings_backlight_level;
+
   lm_ctrl_ui_action_cb_t action_cb;
   void *action_user_data;
   lm_ctrl_ui_binding_t bindings[LM_CTRL_UI_BINDING_COUNT];
