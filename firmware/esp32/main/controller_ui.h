@@ -160,7 +160,6 @@ struct lm_ctrl_ui_s {
   lv_obj_t *settings_reset_button;
   lv_obj_t *settings_reset_label;
 
-  bool rendered_settings_visible;
   uint8_t settings_theme_index;
   uint8_t settings_backlight_level;
 

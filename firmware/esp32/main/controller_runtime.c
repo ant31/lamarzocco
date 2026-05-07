@@ -981,6 +981,10 @@ void lm_ctrl_runtime_handle_input_event(
         (void)lm_ctrl_haptic_click();
       }
       break;
+    case LM_CTRL_EVENT_OPEN_SETTINGS:
+      runtime->state.screen = CTRL_SCREEN_SETTINGS;
+      (void)lm_ctrl_haptic_click();
+      break;
     case LM_CTRL_EVENT_OPEN_BACKFLUSH:
       runtime->backflush_open = true;
       (void)lm_ctrl_haptic_click();
@@ -1000,7 +1004,11 @@ void lm_ctrl_runtime_handle_input_event(
       (void)lm_ctrl_haptic_click();
       break;
     case LM_CTRL_EVENT_CLOSE_SCREEN:
-      ctrl_close_overlay(&runtime->state);
+      if (runtime->state.screen == CTRL_SCREEN_SETTINGS) {
+        runtime->state.screen = CTRL_SCREEN_MAIN;
+      } else {
+        ctrl_close_overlay(&runtime->state);
+      }
       (void)lm_ctrl_haptic_click();
       break;
     default:

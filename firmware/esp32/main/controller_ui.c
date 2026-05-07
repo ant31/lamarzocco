@@ -515,9 +515,8 @@ static void dispatch_action(lv_event_t *event) {
   binding->ui->action_cb(binding->action, binding->focus, binding->ui->action_user_data);
 }
 
-/* Forward declarations — defined later in the file. */
+/* Forward declaration — defined later in the file. */
 static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta);
-static void render_settings_screen(lm_ctrl_ui_t *ui);
 
 /* Manual swipe detection — mirrors the Elecrow factory demo approach.
  * LVGL gesture events never fire reliably on the CST820 because the chip
@@ -605,26 +604,8 @@ static void handle_tap_zone(lv_event_t *event) {
     return;
   }
 
-  /* Settings overlay — handled entirely in the UI layer */
-  if (ui->rendered_settings_visible) {
-    if (dir == LV_DIR_BOTTOM) {
-      /* swipe down from settings → open setup */
-      ui->rendered_settings_visible = false;
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
-    } else if (dir == LV_DIR_TOP) {
-      /* swipe up from settings → back to main */
-      ui->rendered_settings_visible = false;
-      set_hidden(ui->settings_card, true);
-    }
-    return;
-  }
-
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
-      /* LEFT edge  → previous page (right=-1 means go back)
-       * RIGHT edge → next page
-       * TOP edge   → presets (finger coming from top = reaching down)
-       * BOTTOM edge→ settings (finger coming from bottom = reaching up) */
       if (dir == LV_DIR_LEFT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_RIGHT) {
@@ -632,8 +613,14 @@ static void handle_tap_zone(lv_event_t *event) {
       } else if (dir == LV_DIR_TOP) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
       } else if (dir == LV_DIR_BOTTOM) {
-        ui->rendered_settings_visible = true;
-        render_settings_screen(ui);
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETTINGS, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_SETTINGS:
+      if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+      } else if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_PRESETS:
@@ -737,25 +724,6 @@ static void handle_touch_up(lv_event_t *event) {
     return;
   }
 
-  /* Settings overlay — handled entirely in the UI layer */
-  if (ui->rendered_settings_visible) {
-    if (dir == LV_DIR_TOP) {
-      /* swipe up from settings → open setup */
-      ui->rendered_settings_visible = false;
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
-    } else if (dir == LV_DIR_BOTTOM) {
-      /* swipe down from settings → back to main */
-      ui->rendered_settings_visible = false;
-      set_hidden(ui->settings_card, true);
-    }
-    return;
-  }
-
-  /* Swipe direction convention:
-   * LEFT  (dx<0, finger moves left)  → next page
-   * RIGHT (dx>0, finger moves right) → previous page
-   * TOP   (dy<0, finger moves up)    → settings
-   * BOTTOM(dy>0, finger moves down)  → open presets */
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
@@ -763,10 +731,16 @@ static void handle_touch_up(lv_event_t *event) {
       } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_TOP) {
-        ui->rendered_settings_visible = true;
-        render_settings_screen(ui);
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETTINGS, CTRL_FOCUS_TEMPERATURE);
       } else if (dir == LV_DIR_BOTTOM) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
+      }
+      break;
+    case CTRL_SCREEN_SETTINGS:
+      if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+      } else if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_PRESETS:
@@ -817,12 +791,6 @@ static void render_backflush_screen(
   if (ui == NULL) {
     return;
   }
-
-  /* Move to foreground every render — other render paths call
-   * lv_obj_move_foreground on icons/dots and can accidentally bury the card */
-  lv_obj_move_foreground(ui->backflush_card);
-
-  /* Hide every other content card */
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
@@ -969,19 +937,6 @@ static void handle_screen_gesture(lv_event_t *event) {
     return;
   }
 
-  if (ui->rendered_settings_visible) {
-    if (dir == LV_DIR_TOP) {
-      ui->rendered_settings_visible = false;
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
-      lv_indev_wait_release(indev);
-    } else if (dir == LV_DIR_BOTTOM) {
-      ui->rendered_settings_visible = false;
-      set_hidden(ui->settings_card, true);
-      lv_indev_wait_release(indev);
-    }
-    return;
-  }
-
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
@@ -989,8 +944,7 @@ static void handle_screen_gesture(lv_event_t *event) {
       } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_TOP) {
-        ui->rendered_settings_visible = true;
-        render_settings_screen(ui);
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETTINGS, CTRL_FOCUS_TEMPERATURE);
         lv_indev_wait_release(indev);
         return;
       } else if (dir == LV_DIR_BOTTOM) {
@@ -999,6 +953,15 @@ static void handle_screen_gesture(lv_event_t *event) {
         return;
       }
       break;
+    case CTRL_SCREEN_SETTINGS:
+      if (dir == LV_DIR_TOP) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
+        lv_indev_wait_release(indev);
+      } else if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
+        lv_indev_wait_release(indev);
+      }
+      return;
     case CTRL_SCREEN_PRESETS:
       if (dir != LV_DIR_TOP) {
         return;
@@ -1050,13 +1013,11 @@ static void render_settings_screen(lm_ctrl_ui_t *ui) {
   }
 
   set_hidden(ui->settings_card, false);
-  lv_obj_move_foreground(ui->settings_card);
 
   set_label_text(ui->settings_title, "Settings", COLOR_ACTIVE);
   set_label_text(ui->settings_theme_label, "Theme", COLOR_MUTED);
   set_label_text(ui->settings_theme_name, theme->name, COLOR_TEXT);
 
-  /* Brightness indicators — filled up to the current level */
   for (uint8_t i = 0; i < 5; ++i) {
     const bool active = i <= ui->settings_backlight_level;
     lv_obj_set_style_bg_color(ui->settings_bl_indicators[i], active ? COLOR_ACTIVE : COLOR_BUTTON, 0);
@@ -1717,14 +1678,7 @@ esp_err_t lm_ctrl_ui_init(
   bind_button(ui, BIND_BACKFLUSH_START, ui->backflush_start_button, LM_CTRL_UI_ACTION_START_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
   set_label_text(ui->backflush_start_label, "START", COLOR_BG);
 
-  /* Give the backflush card a solid opaque background so it occludes every
-   * other card behind it.  create_panel() uses LV_OPA_TRANSP which would let
-   * the main/presets/setup cards bleed through. */
-  lv_obj_set_style_bg_color(ui->backflush_card, COLOR_BG, 0);
-  lv_obj_set_style_bg_opa(ui->backflush_card, LV_OPA_COVER, 0);
-
   set_hidden(ui->backflush_card, true);
-  lv_obj_move_foreground(ui->backflush_card);
 
   ui->presets_card = create_panel(ui->screen, 282, 196);
   ui->presets_title = lv_label_create(ui->presets_card);
@@ -1807,10 +1761,8 @@ esp_err_t lm_ctrl_ui_init(
   set_hidden(ui->setup_secondary_button, true);
   set_hidden(ui->setup_primary_button, true);
 
-  /* Settings overlay card */
+  /* Settings screen card — transparent like all other screen panels */
   ui->settings_card = create_panel(ui->screen, 300, 280);
-  lv_obj_set_style_bg_color(ui->settings_card, COLOR_BG, 0);
-  lv_obj_set_style_bg_opa(ui->settings_card, LV_OPA_COVER, 0);
 
   ui->settings_title = lv_label_create(ui->settings_card);
   lv_obj_set_style_text_font(ui->settings_title, UI_FONT_20, 0);
@@ -1908,12 +1860,9 @@ esp_err_t lm_ctrl_ui_init(
 
   /* Seed settings state from the controller state passed to init */
   ui->settings_theme_index = state->theme_index < LM_CTRL_UI_THEME_COUNT ? state->theme_index : 0;
-  /* Default to full brightness (level 4) when the stored value is 0 and theme is
-   * also 0 — that indicates a first-boot / uninitialized state. */
   ui->settings_backlight_level = (state->backlight_level == 0 && state->theme_index == 0)
     ? 4
     : (state->backlight_level < 5 ? state->backlight_level : 4);
-  ui->rendered_settings_visible = false;
 
   for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
     ui->page_dots[i] = lv_obj_create(ui->screen);
@@ -1981,16 +1930,10 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
   ui->rendered_shot_timer_dismissable = view != NULL && view->shot_timer_dismissable;
   ui->rendered_backflush_visible = view != NULL && view->backflush_visible;
 
-  /* If the settings overlay is active, keep it rendered and skip the rest */
-  if (ui->rendered_settings_visible) {
-    render_settings_screen(ui);
-    render_title(ui, view);
-    render_connection_icons(ui, view);
-    return;
+  /* Ensure settings card is hidden unless we are on the settings screen */
+  if (state->screen != CTRL_SCREEN_SETTINGS) {
+    set_hidden(ui->settings_card, true);
   }
-
-  /* Ensure settings card is hidden when not in settings mode */
-  set_hidden(ui->settings_card, true);
 
   render_title(ui, view);
 
@@ -2008,6 +1951,9 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
     case CTRL_SCREEN_SETUP_RESET_ARM:
     case CTRL_SCREEN_SETUP_RESET_CONFIRM:
       render_setup_screen(ui, state, view);
+      break;
+    case CTRL_SCREEN_SETTINGS:
+      render_settings_screen(ui);
       break;
     case CTRL_SCREEN_MAIN:
     default:
