@@ -88,6 +88,9 @@ static void ui_action_cb(lm_ctrl_ui_action_t action, ctrl_focus_t focus, void *u
     case LM_CTRL_UI_ACTION_START_BACKFLUSH:
       event_type = LM_CTRL_EVENT_START_BACKFLUSH;
       break;
+    case LM_CTRL_UI_ACTION_CONFIRM_VALUE:
+      event_type = LM_CTRL_EVENT_CONFIRM_VALUE;
+      break;
     default:
       return;
   }
@@ -158,13 +161,11 @@ void app_main(void) {
   lm_ctrl_runtime_init(&runtime);
   lm_ctrl_runtime_bootstrap(&runtime);
 
-  /* Auto-connect to the previously selected machine on boot.
-   * lm_ctrl_settings_load() already restored the machine binding from NVS;
-   * we just need to kick the worker so it starts syncing without requiring
-   * the user to click "use selected machine" in the web portal. */
+  /* Auto-sync is triggered automatically by lm_ctrl_runtime_handle_wifi_status_change
+   * once the STA link is up and an IP is assigned.  No eager call here — attempting
+   * a cloud sync before WiFi is ready causes an immediate DNS failure. */
   if (lm_ctrl_settings_get_effective_selected_machine(NULL)) {
-    ESP_LOGI(TAG, "Persisted machine selection found — requesting auto-sync");
-    lm_ctrl_machine_link_request_sync();
+    ESP_LOGI(TAG, "Persisted machine selection found — sync will start once WiFi connects");
   } else {
     ESP_LOGI(TAG, "No persisted machine selection — waiting for user to select via portal");
   }

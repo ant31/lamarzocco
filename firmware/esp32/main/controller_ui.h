@@ -6,10 +6,11 @@
 #include "controller_connectivity.h"
 #include "controller_state.h"
 
-/** Maximum number of horizontally swipeable main pages in the round UI. */
-#define LM_CTRL_UI_MAIN_PAGE_COUNT 8
+/** Maximum number of horizontally swipeable main pages in the round UI.
+ *  The last slot is always the Backflush page. */
+#define LM_CTRL_UI_MAIN_PAGE_COUNT 9
 /** Maximum number of touch bindings stored for button-like actions. */
-#define LM_CTRL_UI_BINDING_COUNT 8
+#define LM_CTRL_UI_BINDING_COUNT 9
 /** Maximum setup status text length passed into the UI view model. */
 #define LM_CTRL_UI_STATUS_TEXT_LEN 256
 /** Maximum setup QR payload length passed into the UI view model. */
@@ -36,6 +37,8 @@ typedef struct {
   uint16_t heat_progress_permille;
   const lv_img_dsc_t *custom_logo;
   bool backflush_visible;
+  bool pending_edit;
+  ctrl_focus_t pending_edit_focus;
   char shot_timer_text[24];
   char heat_eta_text[16];
   char setup_status_text[LM_CTRL_UI_STATUS_TEXT_LEN];
@@ -58,6 +61,7 @@ typedef enum {
   LM_CTRL_UI_ACTION_OPEN_BACKFLUSH,
   LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH,
   LM_CTRL_UI_ACTION_START_BACKFLUSH,
+  LM_CTRL_UI_ACTION_CONFIRM_VALUE,
 } lm_ctrl_ui_action_t;
 
 /** Callback invoked when the UI needs the main loop to handle a touch action. */

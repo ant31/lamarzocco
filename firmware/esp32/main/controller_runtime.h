@@ -54,6 +54,15 @@ typedef struct {
   lm_ctrl_runtime_heat_refresh_t heat_refresh;
   lm_ctrl_runtime_shot_timer_state_t shot_timer_state;
   bool backflush_open;
+
+  /* Pending edit — encoder rotation sets local value but does NOT send to
+   * machine until the user explicitly confirms (button press, tap on value,
+   * or CONFIRM_VALUE event).  If the timeout fires without confirmation the
+   * local value is reverted to what the machine last reported. */
+  bool pending_edit;
+  ctrl_focus_t pending_edit_focus;
+  ctrl_values_t pre_edit_values;    /* machine-reported values at edit start */
+  int64_t pending_edit_timeout_us;  /* absolute esp_timer time; 0 = not armed */
 } lm_ctrl_runtime_t;
 
 void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime);

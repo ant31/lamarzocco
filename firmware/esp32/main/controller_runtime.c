@@ -25,8 +25,9 @@ static const char *TAG = "lm_ctrl_runtime";
 static const int64_t CLOUD_PROBE_INTERVAL_US = 60LL * 1000LL * 1000LL;
 static const int64_t BLE_VALUE_REFRESH_INTERVAL_US = 15LL * 1000LL * 1000LL;
 static const int64_t CLOUD_VALUE_REFRESH_INTERVAL_US = 60LL * 1000LL * 1000LL;
-static const int64_t LOCAL_VALUE_HOLD_US = 20LL * 1000LL * 1000LL;
-static const int64_t DELAYED_MACHINE_SEND_US = 800LL * 1000LL;
+static const int64_t LOCAL_VALUE_HOLD_US = 30LL * 1000LL * 1000LL;
+/** How long to wait for a confirm gesture before reverting a pending edit. */
+static const int64_t PENDING_EDIT_TIMEOUT_US = 5LL * 1000LL * 1000LL;
 static const int64_t HEAT_REFRESH_INTERVAL_US = 5LL * 1000LL * 1000LL;
 static const int64_t HEAT_REFRESH_INITIAL_DELAY_US = 2LL * 1000LL * 1000LL;
 static const int64_t HEAT_REFRESH_TIMEOUT_US = 120LL * 1000LL * 1000LL;
@@ -224,18 +225,6 @@ static void note_local_value_hold(
   hold->values = *values;
   hold->mask |= field_mask;
   hold->expires_us = esp_timer_get_time() + LOCAL_VALUE_HOLD_US;
-}
-
-static void arm_delayed_machine_send(
-  lm_ctrl_runtime_delayed_machine_send_t *delayed_send,
-  uint32_t field_mask
-) {
-  if (delayed_send == NULL || field_mask == LM_CTRL_MACHINE_FIELD_NONE) {
-    return;
-  }
-
-  delayed_send->mask |= field_mask;
-  delayed_send->due_us = esp_timer_get_time() + DELAYED_MACHINE_SEND_US;
 }
 
 static void clear_delayed_machine_send_mask(
@@ -679,6 +668,91 @@ static void maybe_request_fast_heat_refresh(lm_ctrl_runtime_t *runtime) {
   }
 }
 
+/** Copy back the single field that was being edited from pre_edit_values,
+ *  clear the local hold for that field, and cancel any delayed send. */
+static void revert_pending_edit(lm_ctrl_runtime_t *runtime) {
+  uint32_t field_mask;
+
+  if (runtime == NULL) {
+    return;
+  }
+
+  switch (runtime->pending_edit_focus) {
+    case CTRL_FOCUS_TEMPERATURE:
+      runtime->state.values.temperature_c = runtime->pre_edit_values.temperature_c;
+      break;
+    case CTRL_FOCUS_INFUSE:
+      runtime->state.values.infuse_s = runtime->pre_edit_values.infuse_s;
+      break;
+    case CTRL_FOCUS_PAUSE:
+      runtime->state.values.pause_s = runtime->pre_edit_values.pause_s;
+      break;
+    case CTRL_FOCUS_STEAM:
+      runtime->state.values.steam_level = runtime->pre_edit_values.steam_level;
+      break;
+    case CTRL_FOCUS_STANDBY:
+      runtime->state.values.standby_on = runtime->pre_edit_values.standby_on;
+      break;
+    case CTRL_FOCUS_BBW_MODE:
+      runtime->state.values.bbw_mode = runtime->pre_edit_values.bbw_mode;
+      break;
+    case CTRL_FOCUS_BBW_DOSE_1:
+      runtime->state.values.bbw_dose_1_g = runtime->pre_edit_values.bbw_dose_1_g;
+      break;
+    case CTRL_FOCUS_BBW_DOSE_2:
+      runtime->state.values.bbw_dose_2_g = runtime->pre_edit_values.bbw_dose_2_g;
+      break;
+    default:
+      break;
+  }
+
+  field_mask = lm_ctrl_machine_field_for_focus(runtime->pending_edit_focus);
+  if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+    runtime->local_value_hold.mask &= ~field_mask;
+    clear_delayed_machine_send_mask(&runtime->delayed_machine_send, field_mask);
+  }
+
+  ESP_LOGI(TAG, "Pending edit reverted for focus=%s", ctrl_focus_name(runtime->pending_edit_focus));
+}
+
+/** Commit a pending edit: queue the current local value to the machine link,
+ *  refresh the local hold, and clear the pending state. */
+static void confirm_pending_edit(lm_ctrl_runtime_t *runtime) {
+  uint32_t field_mask;
+  ctrl_focus_t confirmed_focus;
+
+  if (runtime == NULL || !runtime->pending_edit) {
+    return;
+  }
+
+  confirmed_focus = runtime->pending_edit_focus;
+  field_mask = lm_ctrl_machine_field_for_focus(confirmed_focus);
+  if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+    if (lm_ctrl_machine_link_queue_values(&runtime->state.values, field_mask) == ESP_OK) {
+      note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
+      clear_delayed_machine_send_mask(&runtime->delayed_machine_send, field_mask);
+      ESP_LOGI(TAG, "Pending edit confirmed for focus=%s", ctrl_focus_name(confirmed_focus));
+    } else {
+      ESP_LOGW(TAG, "Failed to queue confirmed edit for focus=%s", ctrl_focus_name(confirmed_focus));
+    }
+  }
+
+  runtime->pending_edit = false;
+  runtime->pending_edit_timeout_us = 0;
+
+  /* Standby heat state side-effects — apply after queueing so the machine
+   * link has the new value before we reset/arm the heat session. */
+  if (confirmed_focus == CTRL_FOCUS_STANDBY) {
+    if (runtime->state.values.standby_on) {
+      reset_heat_state(&runtime->heat_state);
+      clear_heat_refresh(&runtime->heat_refresh);
+    } else {
+      reset_heat_state(&runtime->heat_state);
+      arm_heat_refresh(&runtime->heat_refresh, HEAT_REFRESH_INITIAL_DELAY_US);
+    }
+  }
+}
+
 void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime) {
   if (runtime == NULL) {
     return;
@@ -753,18 +827,33 @@ void lm_ctrl_runtime_handle_input_event(
           !lm_ctrl_controller_field_is_editable(access.editable_mask, runtime->state.focus)) {
         break;
       }
-      ctrl_rotate(&runtime->state, event->delta_steps);
       {
         const uint32_t field_mask = lm_ctrl_machine_field_for_focus(runtime->state.focus);
         if (field_mask != LM_CTRL_MACHINE_FIELD_NONE && should_defer_machine_send(field_mask)) {
+          /* First rotation of a new edit sequence — snapshot pre-edit values */
+          if (!runtime->pending_edit || runtime->pending_edit_focus != runtime->state.focus) {
+            lm_ctrl_machine_link_get_values(&runtime->pre_edit_values, NULL, NULL);
+            /* If cloud hasn't loaded yet, use current state as baseline */
+            if (runtime->pre_edit_values.temperature_c == 0.0f) {
+              runtime->pre_edit_values = runtime->state.values;
+            }
+            runtime->pending_edit_focus = runtime->state.focus;
+            runtime->pending_edit = true;
+          }
+          ctrl_rotate(&runtime->state, event->delta_steps);
+          /* Refresh hold and extend timeout on every step */
           note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
-          arm_delayed_machine_send(&runtime->delayed_machine_send, field_mask);
-        } else if (lm_ctrl_machine_link_queue_values(&runtime->state.values, field_mask) != ESP_OK &&
-                   field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-          ESP_LOGW(TAG, "Failed to queue BLE update for focus=%s", ctrl_focus_name(runtime->state.focus));
-        } else if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-          note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
-          clear_delayed_machine_send_mask(&runtime->delayed_machine_send, field_mask);
+          runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+          /* Do NOT queue to machine link — wait for confirm */
+        } else {
+          ctrl_rotate(&runtime->state, event->delta_steps);
+          if (lm_ctrl_machine_link_queue_values(&runtime->state.values, field_mask) != ESP_OK &&
+              field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+            ESP_LOGW(TAG, "Failed to queue BLE update for focus=%s", ctrl_focus_name(runtime->state.focus));
+          } else if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+            note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
+            clear_delayed_machine_send_mask(&runtime->delayed_machine_send, field_mask);
+          }
         }
       }
       should_persist_state = runtime->state.screen == CTRL_SCREEN_MAIN && (
@@ -782,24 +871,23 @@ void lm_ctrl_runtime_handle_input_event(
       ctrl_set_focus(&runtime->state, event->focus);
       (void)lm_ctrl_haptic_click();
       break;
+    case LM_CTRL_EVENT_CONFIRM_VALUE:
+      if (runtime->pending_edit) {
+        confirm_pending_edit(runtime);
+        (void)lm_ctrl_haptic_click();
+      }
+      break;
     case LM_CTRL_EVENT_TOGGLE_FOCUS:
       if (runtime->state.screen == CTRL_SCREEN_MAIN &&
           !lm_ctrl_controller_field_is_editable(access.editable_mask, event->focus)) {
         break;
       }
-      ctrl_toggle_focus(&runtime->state, event->focus);
-      {
+      /* If a pending edit exists on this same focus, confirm it */
+      if (runtime->pending_edit && runtime->pending_edit_focus == event->focus) {
         const bool waking_from_standby =
           event->focus == CTRL_FOCUS_STANDBY &&
           runtime->state.values.standby_on == false;
-        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(event->focus);
-        if (lm_ctrl_machine_link_queue_values(&runtime->state.values, field_mask) != ESP_OK &&
-            field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-          ESP_LOGW(TAG, "Failed to queue BLE toggle for focus=%s", ctrl_focus_name(event->focus));
-        } else if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-          note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
-          clear_delayed_machine_send_mask(&runtime->delayed_machine_send, field_mask);
-        }
+        confirm_pending_edit(runtime);
         if (event->focus == CTRL_FOCUS_STANDBY && runtime->state.values.standby_on) {
           reset_heat_state(&runtime->heat_state);
           clear_heat_refresh(&runtime->heat_refresh);
@@ -807,7 +895,27 @@ void lm_ctrl_runtime_handle_input_event(
           reset_heat_state(&runtime->heat_state);
           arm_heat_refresh(&runtime->heat_refresh, HEAT_REFRESH_INITIAL_DELAY_US);
         }
+        (void)lm_ctrl_haptic_click();
+        break;
       }
+      /* If a different focus is pending, confirm it first before toggling */
+      if (runtime->pending_edit) {
+        confirm_pending_edit(runtime);
+      }
+      /* Snapshot pre-toggle state so revert can undo it */
+      runtime->pre_edit_values = runtime->state.values;
+      ctrl_toggle_focus(&runtime->state, event->focus);
+      runtime->pending_edit_focus = event->focus;
+      runtime->pending_edit = true;
+      runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+      /* Hold the local value so cloud sync doesn't overwrite it during the window */
+      {
+        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(event->focus);
+        if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+          note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
+        }
+      }
+      ESP_LOGI(TAG, "Toggle pending confirmation for focus=%s", ctrl_focus_name(event->focus));
       (void)lm_ctrl_haptic_click();
       break;
     case LM_CTRL_EVENT_OPEN_PRESETS:
@@ -1014,6 +1122,19 @@ void lm_ctrl_runtime_tick(lm_ctrl_runtime_t *runtime, bool *needs_render) {
     return;
   }
 
+  /* Revert a pending edit if the user has not confirmed within the timeout */
+  if (runtime->pending_edit &&
+      runtime->pending_edit_timeout_us > 0 &&
+      esp_timer_get_time() >= runtime->pending_edit_timeout_us) {
+    revert_pending_edit(runtime);
+    runtime->pending_edit = false;
+    runtime->pending_edit_timeout_us = 0;
+    ESP_LOGI(TAG, "Pending edit timed out — value reverted");
+    if (needs_render != NULL) {
+      *needs_render = true;
+    }
+  }
+
   maybe_request_cloud_probe(&runtime->last_cloud_probe_request_us);
   maybe_request_value_sync(&runtime->state);
   maybe_request_periodic_value_refresh(&runtime->last_ble_refresh_request_us, &runtime->last_cloud_refresh_request_us);
@@ -1080,6 +1201,8 @@ void lm_ctrl_runtime_build_ui_view(const lm_ctrl_runtime_t *runtime, lm_ctrl_ui_
   view->heat_progress_permille = heat_state_progress_permille(&runtime->heat_state);
   view->custom_logo = wifi_info.has_custom_logo ? lm_ctrl_wifi_get_custom_logo() : NULL;
   view->backflush_visible = runtime->backflush_open;
+  view->pending_edit = runtime->pending_edit;
+  view->pending_edit_focus = runtime->pending_edit_focus;
   view->shot_timer_visible = lm_ctrl_shot_timer_visible(&runtime->shot_timer_state);
   view->shot_timer_dismissable = lm_ctrl_shot_timer_dismissable(&runtime->shot_timer_state);
   if (view->shot_timer_visible) {

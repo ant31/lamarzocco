@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "extra/libs/qrcode/lv_qrcode.h"
 #include "lm_ctrl_fonts.h"
 #include "board_config.h"
@@ -54,6 +55,7 @@ enum {
   BIND_SETUP_RESET_CONFIRM,
   BIND_BACKFLUSH_START,
   BIND_BACKFLUSH_CLOSE,
+  BIND_CONFIRM_VALUE,
 };
 
 static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
@@ -64,22 +66,26 @@ static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
   return focus >= CTRL_FOCUS_TEMPERATURE && focus < CTRL_FOCUS_COUNT;
 }
 
+/* Number of real focus-based pages (excludes the backflush page slot). */
+#define MAIN_FOCUS_PAGE_COUNT (LM_CTRL_UI_MAIN_PAGE_COUNT - 1)
+
 static size_t main_page_count(uint32_t feature_mask) {
   size_t count = 0;
 
-  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+  for (size_t i = 0; i < MAIN_FOCUS_PAGE_COUNT; ++i) {
     if (focus_supported(feature_mask, MAIN_PAGE_ORDER[i])) {
       count++;
     }
   }
 
-  return count;
+  /* Always add 1 for the backflush page at the end */
+  return count + 1;
 }
 
 static int main_page_index(uint32_t feature_mask, ctrl_focus_t focus) {
   int page_index = 0;
 
-  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+  for (size_t i = 0; i < MAIN_FOCUS_PAGE_COUNT; ++i) {
     if (!focus_supported(feature_mask, MAIN_PAGE_ORDER[i])) {
       continue;
     }
@@ -90,6 +96,11 @@ static int main_page_index(uint32_t feature_mask, ctrl_focus_t focus) {
   }
 
   return 0;
+}
+
+/* Returns the page index of the backflush page (always the last one). */
+static int backflush_page_index(uint32_t feature_mask) {
+  return (int)main_page_count(feature_mask) - 1;
 }
 
 static ctrl_focus_t focus_from_page_index(uint32_t feature_mask, int index) {
@@ -744,36 +755,60 @@ static void handle_touch_up(lv_event_t *event) {
 static void handle_main_long_press(lv_event_t *event) {
   lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
 
-  if (ui == NULL || ui->rendered_shot_timer_visible || ui->rendered_backflush_visible) {
-    return;
-  }
-  if (ui->rendered_screen != CTRL_SCREEN_MAIN) {
+  if (ui == NULL || ui->rendered_screen != CTRL_SCREEN_MAIN) {
     return;
   }
 
-  dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+  /* Long press = go home (temperature page).
+   * If backflush is open, close it first. */
+  if (ui->rendered_backflush_visible) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    return;
+  }
+
+  dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, CTRL_FOCUS_TEMPERATURE);
 }
 
-static void render_backflush_screen(lm_ctrl_ui_t *ui) {
+static void render_backflush_screen(
+  lm_ctrl_ui_t *ui,
+  const lm_ctrl_ui_view_t *view
+) {
+  const size_t page_count = main_page_count(ui->rendered_feature_mask);
+  const int bf_index      = backflush_page_index(ui->rendered_feature_mask);
+
   if (ui == NULL) {
     return;
   }
 
+  /* Move to foreground every render — other render paths call
+   * lv_obj_move_foreground on icons/dots and can accidentally bury the card */
+  lv_obj_move_foreground(ui->backflush_card);
+
+  /* Hide every other content card */
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
   set_hidden(ui->shot_timer_card, true);
   set_hidden(ui->backflush_card, false);
   set_hidden(ui->setup_reset_arc, true);
-  set_hidden(ui->heat_arc, true);
+  set_hidden(ui->heat_arc, view == NULL ? true : !view->heat_arc_visible);
   set_hidden(ui->page_label, true);
   set_hidden(ui->setup_secondary_button, true);
   set_hidden(ui->setup_primary_button, true);
   set_hidden(ui->power_left_button, true);
   set_hidden(ui->power_right_button, true);
   set_hidden(ui->power_hint, true);
+
+  /* Show page dots — backflush dot is the last one, highlighted */
   for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
-    set_hidden(ui->page_dots[i], true);
+    if (i >= page_count) {
+      set_hidden(ui->page_dots[i], true);
+      continue;
+    }
+    const int x_offset = (int)((int)i * 17) - (int)(((int)page_count - 1) * 17 / 2);
+    lv_obj_align(ui->page_dots[i], LV_ALIGN_CENTER, x_offset, 106);
+    set_hidden(ui->page_dots[i], false);
+    style_page_dot(ui->page_dots[i], (int)i == bf_index);
   }
 
   set_label_text(ui->backflush_title, "Backflush", COLOR_ACTIVE);
@@ -847,10 +882,33 @@ static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta) {
     return;
   }
 
+  const int current_index = ui->rendered_backflush_visible
+    ? backflush_page_index(ui->rendered_feature_mask)
+    : main_page_index(ui->rendered_feature_mask, ui->rendered_focus);
+  const int page_count    = (int)main_page_count(ui->rendered_feature_mask);
+  const int next_index    = current_index + delta;
+
+  /* Swiping past the last page (backflush) wraps, swiping into last = open backflush */
+  if (next_index >= page_count) {
+    /* wrap around to first page */
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, CTRL_FOCUS_TEMPERATURE);
+    return;
+  }
+
+  if (next_index == backflush_page_index(ui->rendered_feature_mask)) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    return;
+  }
+
+  if (ui->rendered_backflush_visible) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+  }
+
   dispatch_action_direct(
     ui,
     LM_CTRL_UI_ACTION_SELECT_FOCUS,
-    focus_from_page_index(ui->rendered_feature_mask, main_page_index(ui->rendered_feature_mask, ui->rendered_focus) + delta)
+    focus_from_page_index(ui->rendered_feature_mask, next_index)
   );
 }
 
@@ -927,11 +985,14 @@ static void render_main_screen(
   bool has_hint;
   const int page_index = main_page_index(state->feature_mask, state->focus);
   const size_t page_count = main_page_count(state->feature_mask);
+  const bool steam_pending   = view != NULL && view->pending_edit && view->pending_edit_focus == CTRL_FOCUS_STEAM;
+  const bool standby_pending = view != NULL && view->pending_edit && view->pending_edit_focus == CTRL_FOCUS_STANDBY;
 
   set_hidden(ui->main_card, false);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
   set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, true);
   set_hidden(ui->setup_reset_arc, true);
   set_hidden(ui->heat_arc, view == NULL || !view->heat_arc_visible);
   set_hidden(ui->setup_secondary_button, true);
@@ -951,6 +1012,12 @@ static void render_main_screen(
   if (presentation != LM_CTRL_FIELD_PRESENTATION_READY) {
     value_color = COLOR_MUTED;
   }
+  /* Amber value when there is an unconfirmed local edit on this focus */
+  const bool this_focus_pending = view != NULL && view->pending_edit &&
+                                  view->pending_edit_focus == state->focus;
+  if (this_focus_pending) {
+    value_color = COLOR_ACTIVE;
+  }
   set_label_text(ui->focus, focus_title(state->focus, language), title_color);
 
   if (presentation == LM_CTRL_FIELD_PRESENTATION_READY && is_focus_value_loaded(state, state->focus)) {
@@ -960,7 +1027,10 @@ static void render_main_screen(
   } else {
     format_main_unavailable_placeholder(state->focus, language, value, sizeof(value), hint, sizeof(hint));
   }
-  if (view != NULL && view->water_alert_visible) {
+  if (this_focus_pending || steam_pending || standby_pending) {
+    /* Override hint to guide the user to confirm or wait for revert */
+    snprintf(hint, sizeof(hint), "Tap or press button to confirm");
+  } else if (view != NULL && view->water_alert_visible) {
     format_no_water_hint(language, hint, sizeof(hint));
   }
   if (view != NULL && view->heat_arc_visible) {
@@ -971,6 +1041,30 @@ static void render_main_screen(
   set_hidden(ui->hint, !has_hint);
   if (has_hint) {
     set_label_text(ui->hint, hint, COLOR_MUTED);
+  }
+
+  /* Amber tint on power buttons when steam or standby has a pending edit */
+  if (state->focus == CTRL_FOCUS_STEAM || state->focus == CTRL_FOCUS_STANDBY) {
+    if (steam_pending) {
+      lv_obj_set_style_bg_color(ui->power_left_button, COLOR_ACTIVE, 0);
+      lv_obj_set_style_bg_opa(ui->power_left_button, LV_OPA_50, 0);
+      lv_obj_set_style_border_color(ui->power_left_button, COLOR_ACTIVE, 0);
+      lv_obj_set_style_border_width(ui->power_left_button, 2, 0);
+    } else {
+      lv_obj_set_style_bg_color(ui->power_left_button, COLOR_BUTTON, 0);
+      lv_obj_set_style_bg_opa(ui->power_left_button, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_width(ui->power_left_button, 0, 0);
+    }
+    if (standby_pending) {
+      lv_obj_set_style_bg_color(ui->power_right_button, COLOR_ACTIVE, 0);
+      lv_obj_set_style_bg_opa(ui->power_right_button, LV_OPA_50, 0);
+      lv_obj_set_style_border_color(ui->power_right_button, COLOR_ACTIVE, 0);
+      lv_obj_set_style_border_width(ui->power_right_button, 2, 0);
+    } else {
+      lv_obj_set_style_bg_color(ui->power_right_button, COLOR_BUTTON, 0);
+      lv_obj_set_style_bg_opa(ui->power_right_button, LV_OPA_COVER, 0);
+      lv_obj_set_style_border_width(ui->power_right_button, 0, 0);
+    }
   }
 
   for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
@@ -1000,6 +1094,7 @@ static void render_shot_timer_screen(lm_ctrl_ui_t *ui, const lm_ctrl_ui_view_t *
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
   set_hidden(ui->shot_timer_card, false);
+  set_hidden(ui->backflush_card, true);
   set_hidden(ui->setup_reset_arc, true);
   set_hidden(ui->heat_arc, true);
   set_hidden(ui->page_label, true);
@@ -1146,6 +1241,7 @@ static void render_presets_screen(
   set_hidden(ui->presets_card, false);
   set_hidden(ui->setup_card, true);
   set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, true);
   set_hidden(ui->setup_reset_arc, true);
   set_hidden(ui->heat_arc, true);
   set_hidden(ui->setup_secondary_button, true);
@@ -1191,6 +1287,7 @@ static void render_setup_screen(lm_ctrl_ui_t *ui, const ctrl_state_t *state, con
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, false);
   set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, true);
   set_hidden(ui->heat_arc, true);
   for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
     set_hidden(ui->page_dots[i], true);
@@ -1393,6 +1490,8 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_text_font(ui->value, UI_FONT_40, 0);
   lv_obj_align(ui->value, LV_ALIGN_CENTER, 0, -6);
   lv_obj_add_flag(ui->value, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_flag(ui->value, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(ui->value, dispatch_action, LV_EVENT_CLICKED, &ui->bindings[BIND_CONFIRM_VALUE]);
 
   ui->hint = lv_label_create(ui->main_card);
   lv_obj_set_width(ui->hint, 226);
@@ -1413,6 +1512,7 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_text_align(ui->shot_timer_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(ui->shot_timer_value, LV_ALIGN_CENTER, 0, -6);
 
+  bind_button(ui, BIND_CONFIRM_VALUE, ui->value, LM_CTRL_UI_ACTION_CONFIRM_VALUE, CTRL_FOCUS_TEMPERATURE);
   lv_obj_add_event_cb(ui->main_card, handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
 
   ui->power_left_button = lv_btn_create(ui->main_card);
@@ -1471,7 +1571,15 @@ esp_err_t lm_ctrl_ui_init(
   ui->backflush_start_button = create_button(ui->backflush_card, 130, 52, 0, 52, &ui->backflush_start_label);
   bind_button(ui, BIND_BACKFLUSH_START, ui->backflush_start_button, LM_CTRL_UI_ACTION_START_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
   set_label_text(ui->backflush_start_label, "START", COLOR_BG);
+
+  /* Give the backflush card a solid opaque background so it occludes every
+   * other card behind it.  create_panel() uses LV_OPA_TRANSP which would let
+   * the main/presets/setup cards bleed through. */
+  lv_obj_set_style_bg_color(ui->backflush_card, COLOR_BG, 0);
+  lv_obj_set_style_bg_opa(ui->backflush_card, LV_OPA_COVER, 0);
+
   set_hidden(ui->backflush_card, true);
+  lv_obj_move_foreground(ui->backflush_card);
 
   ui->presets_card = create_panel(ui->screen, 282, 196);
   ui->presets_title = lv_label_create(ui->presets_card);
@@ -1621,12 +1729,6 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
   ui->rendered_backflush_visible = view != NULL && view->backflush_visible;
   render_title(ui, view);
 
-  if (ui->rendered_backflush_visible) {
-    render_backflush_screen(ui);
-    render_connection_icons(ui, view);
-    return;
-  }
-
   if (ui->rendered_shot_timer_visible) {
     render_shot_timer_screen(ui, view);
     render_connection_icons(ui, view);
@@ -1644,7 +1746,11 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
       break;
     case CTRL_SCREEN_MAIN:
     default:
-      render_main_screen(ui, state, view, language);
+      if (ui->rendered_backflush_visible) {
+        render_backflush_screen(ui, view);
+      } else {
+        render_main_screen(ui, state, view, language);
+      }
       break;
   }
 
