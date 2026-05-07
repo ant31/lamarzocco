@@ -1038,6 +1038,28 @@ void lm_ctrl_machine_link_get_info(lm_ctrl_machine_link_info_t *info) {
   portEXIT_CRITICAL(&s_link_lock);
 }
 
+esp_err_t lm_ctrl_machine_link_start_backflush(void) {
+  lm_ctrl_machine_binding_t binding = {0};
+  lm_ctrl_cloud_command_result_t result = {0};
+  char status_text[128];
+
+  if (!s_link.initialized) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  if (s_deps.get_machine_binding == NULL || !s_deps.get_machine_binding(&binding) || !binding.configured) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  ESP_LOGI(TAG, "Starting backflush cleaning on machine %s", binding.serial);
+  return s_deps.execute_cloud_command(
+    "CoffeeMachineBackFlushStartCleaning",
+    "{\"enabled\":true}",
+    &result,
+    status_text,
+    sizeof(status_text)
+  );
+}
+
 uint32_t lm_ctrl_machine_link_status_version(void) {
   uint32_t version;
 

@@ -53,6 +53,7 @@ typedef struct {
   lm_ctrl_runtime_heat_state_t heat_state;
   lm_ctrl_runtime_heat_refresh_t heat_refresh;
   lm_ctrl_runtime_shot_timer_state_t shot_timer_state;
+  bool backflush_open;
 } lm_ctrl_runtime_t;
 
 void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime);

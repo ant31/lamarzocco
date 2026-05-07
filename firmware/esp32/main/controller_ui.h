@@ -9,7 +9,7 @@
 /** Maximum number of horizontally swipeable main pages in the round UI. */
 #define LM_CTRL_UI_MAIN_PAGE_COUNT 8
 /** Maximum number of touch bindings stored for button-like actions. */
-#define LM_CTRL_UI_BINDING_COUNT 6
+#define LM_CTRL_UI_BINDING_COUNT 8
 /** Maximum setup status text length passed into the UI view model. */
 #define LM_CTRL_UI_STATUS_TEXT_LEN 256
 /** Maximum setup QR payload length passed into the UI view model. */
@@ -35,6 +35,7 @@ typedef struct {
   bool preset_load_enabled;
   uint16_t heat_progress_permille;
   const lv_img_dsc_t *custom_logo;
+  bool backflush_visible;
   char shot_timer_text[24];
   char heat_eta_text[16];
   char setup_status_text[LM_CTRL_UI_STATUS_TEXT_LEN];
@@ -54,6 +55,9 @@ typedef enum {
   LM_CTRL_UI_ACTION_CANCEL_SETUP_RESET,
   LM_CTRL_UI_ACTION_CONFIRM_SETUP_RESET,
   LM_CTRL_UI_ACTION_DISMISS_SHOT_TIMER,
+  LM_CTRL_UI_ACTION_OPEN_BACKFLUSH,
+  LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH,
+  LM_CTRL_UI_ACTION_START_BACKFLUSH,
 } lm_ctrl_ui_action_t;
 
 /** Callback invoked when the UI needs the main loop to handle a touch action. */
@@ -125,6 +129,13 @@ struct lm_ctrl_ui_s {
   uint32_t rendered_feature_mask;
   bool rendered_shot_timer_visible;
   bool rendered_shot_timer_dismissable;
+  bool rendered_backflush_visible;
+
+  lv_obj_t *backflush_card;
+  lv_obj_t *backflush_title;
+  lv_obj_t *backflush_hint;
+  lv_obj_t *backflush_start_button;
+  lv_obj_t *backflush_start_label;
   lm_ctrl_ui_action_cb_t action_cb;
   void *action_user_data;
   lm_ctrl_ui_binding_t bindings[LM_CTRL_UI_BINDING_COUNT];

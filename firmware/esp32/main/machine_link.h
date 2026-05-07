@@ -64,6 +64,8 @@ void lm_ctrl_machine_link_get_status(char *buffer, size_t buffer_size);
 void lm_ctrl_machine_link_get_info(lm_ctrl_machine_link_info_t *info);
 /** Monotonic version counter that changes when machine link state changes. */
 uint32_t lm_ctrl_machine_link_status_version(void);
+/** Send a backflush cleaning start command to the machine via cloud. */
+esp_err_t lm_ctrl_machine_link_start_backflush(void);
 
 #ifdef __cplusplus
 }

@@ -79,6 +79,15 @@ static void ui_action_cb(lm_ctrl_ui_action_t action, ctrl_focus_t focus, void *u
     case LM_CTRL_UI_ACTION_DISMISS_SHOT_TIMER:
       event_type = LM_CTRL_EVENT_DISMISS_SHOT_TIMER;
       break;
+    case LM_CTRL_UI_ACTION_OPEN_BACKFLUSH:
+      event_type = LM_CTRL_EVENT_OPEN_BACKFLUSH;
+      break;
+    case LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH:
+      event_type = LM_CTRL_EVENT_CLOSE_BACKFLUSH;
+      break;
+    case LM_CTRL_UI_ACTION_START_BACKFLUSH:
+      event_type = LM_CTRL_EVENT_START_BACKFLUSH;
+      break;
     default:
       return;
   }

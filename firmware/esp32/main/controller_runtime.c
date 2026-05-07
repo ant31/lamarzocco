@@ -873,6 +873,24 @@ void lm_ctrl_runtime_handle_input_event(
         (void)lm_ctrl_haptic_click();
       }
       break;
+    case LM_CTRL_EVENT_OPEN_BACKFLUSH:
+      runtime->backflush_open = true;
+      (void)lm_ctrl_haptic_click();
+      break;
+    case LM_CTRL_EVENT_CLOSE_BACKFLUSH:
+      runtime->backflush_open = false;
+      (void)lm_ctrl_haptic_click();
+      break;
+    case LM_CTRL_EVENT_START_BACKFLUSH:
+      runtime->backflush_open = false;
+      if (lm_ctrl_machine_link_start_backflush() == ESP_OK) {
+        snprintf(runtime->status, sizeof(runtime->status), "Backflush started.");
+      } else {
+        snprintf(runtime->status, sizeof(runtime->status), "Backflush command failed.");
+      }
+      preserve_status = true;
+      (void)lm_ctrl_haptic_click();
+      break;
     case LM_CTRL_EVENT_CLOSE_SCREEN:
       ctrl_close_overlay(&runtime->state);
       (void)lm_ctrl_haptic_click();
@@ -1061,6 +1079,7 @@ void lm_ctrl_runtime_build_ui_view(const lm_ctrl_runtime_t *runtime, lm_ctrl_ui_
   view->preset_load_enabled = access.preset_load_enabled;
   view->heat_progress_permille = heat_state_progress_permille(&runtime->heat_state);
   view->custom_logo = wifi_info.has_custom_logo ? lm_ctrl_wifi_get_custom_logo() : NULL;
+  view->backflush_visible = runtime->backflush_open;
   view->shot_timer_visible = lm_ctrl_shot_timer_visible(&runtime->shot_timer_state);
   view->shot_timer_dismissable = lm_ctrl_shot_timer_dismissable(&runtime->shot_timer_state);
   if (view->shot_timer_visible) {

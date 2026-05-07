@@ -52,6 +52,8 @@ enum {
   BIND_PRESET_SAVE,
   BIND_SETUP_RESET_CANCEL,
   BIND_SETUP_RESET_CONFIRM,
+  BIND_BACKFLUSH_START,
+  BIND_BACKFLUSH_CLOSE,
 };
 
 static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
@@ -504,32 +506,73 @@ static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta);
  * LVGL's internal gesture distance accumulator to cross its threshold.
  * Instead we record the finger-down position and compare it to the
  * finger-up position; a 50 px delta in the dominant axis is a swipe. */
-#define SWIPE_THRESHOLD_PX 30   /* lowered from 50 — easier vertical swipes */
+#define SWIPE_THRESHOLD_PX 40   /* 40 px — balanced for 480x480 panel */
 
-/* Tap-zone strip width/height in pixels.  These invisible overlays sit on
- * the four edges of the screen and dispatch navigation on a plain tap so
- * the user does not need to swipe a full threshold distance. */
-#define TAP_ZONE_SIZE 60
+/* Tap-zone strip sizes. Left/right are wide (100 px) so they are easy to
+ * hit.  Top/bottom are 80 px tall. */
+#define TAP_ZONE_LR_SIZE 100
+#define TAP_ZONE_TB_SIZE 80
+
+/* Double-tap detection for "go back" on the left zone. */
+#define DOUBLE_TAP_MAX_MS  400   /* max ms between two taps */
+#define DOUBLE_TAP_MAX_PX  80    /* max horizontal distance between taps */
 
 static int16_t s_touch_down_x = 0;
 static int16_t s_touch_down_y = 0;
+
+/* Double-tap state for left-zone back gesture */
+static int16_t  s_last_tap_x   = -1000;
+static uint32_t s_last_tap_ms  = 0;
 
 /* Tap-zone callback — each invisible edge strip carries the desired direction
  * as its user_data (cast from lv_dir_t). */
 static void handle_tap_zone(lv_event_t *event) {
   lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
-  /* Direction is encoded in the object's user_data set at creation time.
-   * We re-use the same dispatch logic as handle_touch_up. */
   lv_dir_t dir = (lv_dir_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(event));
+  const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000LL);
 
   if (ui == NULL) {
     return;
   }
 
-  ESP_LOGI(TAG, "tap zone: %s",
+  ESP_LOGI(TAG, "tap zone: %s screen=%d",
            dir == LV_DIR_LEFT   ? "LEFT"  :
            dir == LV_DIR_RIGHT  ? "RIGHT" :
-           dir == LV_DIR_TOP    ? "UP"    : "DOWN");
+           dir == LV_DIR_TOP    ? "TOP"   : "BOTTOM",
+           (int)ui->rendered_screen);
+
+  /* Double-tap on the LEFT zone = "go back" regardless of screen */
+  if (dir == LV_DIR_LEFT) {
+    bool is_double_tap =
+      (now_ms - s_last_tap_ms) < DOUBLE_TAP_MAX_MS &&
+      abs(s_last_tap_x - TAP_ZONE_LR_SIZE / 2) < DOUBLE_TAP_MAX_PX;
+    s_last_tap_ms = now_ms;
+    s_last_tap_x  = TAP_ZONE_LR_SIZE / 2;
+
+    if (is_double_tap) {
+      ESP_LOGI(TAG, "double-tap LEFT → back/close");
+      switch (ui->rendered_screen) {
+        case CTRL_SCREEN_PRESETS:
+        case CTRL_SCREEN_SETUP:
+          dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
+          break;
+        case CTRL_SCREEN_SETUP_RESET_ARM:
+        case CTRL_SCREEN_SETUP_RESET_CONFIRM:
+          dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CANCEL_SETUP_RESET, CTRL_FOCUS_TEMPERATURE);
+          break;
+        case CTRL_SCREEN_MAIN:
+          if (ui->rendered_backflush_visible) {
+            dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+          } else if (ui->rendered_shot_timer_visible && ui->rendered_shot_timer_dismissable) {
+            dispatch_action_direct(ui, LM_CTRL_UI_ACTION_DISMISS_SHOT_TIMER, CTRL_FOCUS_TEMPERATURE);
+          }
+          break;
+        default:
+          break;
+      }
+      return;
+    }
+  }
 
   if (ui->rendered_shot_timer_visible) {
     if (ui->rendered_shot_timer_dismissable) {
@@ -538,31 +581,40 @@ static void handle_tap_zone(lv_event_t *event) {
     return;
   }
 
+  if (ui->rendered_backflush_visible) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    return;
+  }
+
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
+      /* LEFT edge  → previous page (right=-1 means go back)
+       * RIGHT edge → next page
+       * TOP edge   → presets (finger coming from top = reaching down)
+       * BOTTOM edge→ setup   (finger coming from bottom = reaching up) */
       if (dir == LV_DIR_LEFT) {
-        dispatch_focus_change(ui, +1);
-      } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, -1);
+      } else if (dir == LV_DIR_RIGHT) {
+        dispatch_focus_change(ui, +1);
       } else if (dir == LV_DIR_TOP) {
-        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
-      } else if (dir == LV_DIR_BOTTOM) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
+      } else if (dir == LV_DIR_BOTTOM) {
+        dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETUP, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_PRESETS:
-      if (dir == LV_DIR_TOP) {
+      if (dir == LV_DIR_LEFT || dir == LV_DIR_BOTTOM) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_SETUP:
-      if (dir == LV_DIR_BOTTOM) {
+      if (dir == LV_DIR_LEFT || dir == LV_DIR_TOP) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_SETUP_RESET_ARM:
     case CTRL_SCREEN_SETUP_RESET_CONFIRM:
-      if (dir == LV_DIR_BOTTOM) {
+      if (dir == LV_DIR_LEFT || dir == LV_DIR_TOP) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CANCEL_SETUP_RESET, CTRL_FOCUS_TEMPERATURE);
       }
       break;
@@ -646,6 +698,16 @@ static void handle_touch_up(lv_event_t *event) {
     return;
   }
 
+  if (ui->rendered_backflush_visible) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    return;
+  }
+
+  /* Swipe direction convention:
+   * LEFT  (dx<0, finger moves left)  → next page
+   * RIGHT (dx>0, finger moves right) → previous page
+   * TOP   (dy<0, finger moves up)    → open setup
+   * BOTTOM(dy>0, finger moves down)  → open presets */
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
@@ -659,24 +721,64 @@ static void handle_touch_up(lv_event_t *event) {
       }
       break;
     case CTRL_SCREEN_PRESETS:
-      if (dir == LV_DIR_TOP) {
+      if (dir == LV_DIR_BOTTOM || dir == LV_DIR_RIGHT) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_SETUP:
-      if (dir == LV_DIR_BOTTOM) {
+      if (dir == LV_DIR_TOP || dir == LV_DIR_RIGHT) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_SCREEN, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     case CTRL_SCREEN_SETUP_RESET_ARM:
     case CTRL_SCREEN_SETUP_RESET_CONFIRM:
-      if (dir == LV_DIR_BOTTOM) {
+      if (dir == LV_DIR_BOTTOM || dir == LV_DIR_RIGHT) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CANCEL_SETUP_RESET, CTRL_FOCUS_TEMPERATURE);
       }
       break;
     default:
       break;
   }
+}
+
+static void handle_main_long_press(lv_event_t *event) {
+  lm_ctrl_ui_t *ui = lv_event_get_user_data(event);
+
+  if (ui == NULL || ui->rendered_shot_timer_visible || ui->rendered_backflush_visible) {
+    return;
+  }
+  if (ui->rendered_screen != CTRL_SCREEN_MAIN) {
+    return;
+  }
+
+  dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+}
+
+static void render_backflush_screen(lm_ctrl_ui_t *ui) {
+  if (ui == NULL) {
+    return;
+  }
+
+  set_hidden(ui->main_card, true);
+  set_hidden(ui->presets_card, true);
+  set_hidden(ui->setup_card, true);
+  set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, false);
+  set_hidden(ui->setup_reset_arc, true);
+  set_hidden(ui->heat_arc, true);
+  set_hidden(ui->page_label, true);
+  set_hidden(ui->setup_secondary_button, true);
+  set_hidden(ui->setup_primary_button, true);
+  set_hidden(ui->power_left_button, true);
+  set_hidden(ui->power_right_button, true);
+  set_hidden(ui->power_hint, true);
+  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+    set_hidden(ui->page_dots[i], true);
+  }
+
+  set_label_text(ui->backflush_title, "Backflush", COLOR_ACTIVE);
+  set_label_text(ui->backflush_hint, "Start the cleaning process", COLOR_MUTED);
+  style_action_button(ui->backflush_start_button, ui->backflush_start_label, true);
 }
 
 static void handle_setup_long_press(lv_event_t *event) {
@@ -1200,20 +1302,6 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_add_event_cb(ui->screen, handle_touch_down, LV_EVENT_PRESSED, ui);
   lv_obj_add_event_cb(ui->screen, handle_touch_up, LV_EVENT_RELEASED, ui);
 
-  /* Invisible tap-zone strips on each edge.
-   * Top / Bottom: full width × TAP_ZONE_SIZE px.
-   * Left / Right: TAP_ZONE_SIZE px × remaining height (minus corners). */
-  create_tap_zone(ui->screen, ui, LV_DIR_TOP,
-                  LM_CTRL_LCD_H_RES, TAP_ZONE_SIZE, LV_ALIGN_TOP_MID);
-  create_tap_zone(ui->screen, ui, LV_DIR_BOTTOM,
-                  LM_CTRL_LCD_H_RES, TAP_ZONE_SIZE, LV_ALIGN_BOTTOM_MID);
-  create_tap_zone(ui->screen, ui, LV_DIR_LEFT,
-                  TAP_ZONE_SIZE, LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_SIZE,
-                  LV_ALIGN_LEFT_MID);
-  create_tap_zone(ui->screen, ui, LV_DIR_RIGHT,
-                  TAP_ZONE_SIZE, LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_SIZE,
-                  LV_ALIGN_RIGHT_MID);
-
   lv_scr_load(base_scr);
 
   ui->ring = lv_obj_create(ui->screen);
@@ -1325,6 +1413,8 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_text_align(ui->shot_timer_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(ui->shot_timer_value, LV_ALIGN_CENTER, 0, -6);
 
+  lv_obj_add_event_cb(ui->main_card, handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
+
   ui->power_left_button = lv_btn_create(ui->main_card);
   lv_obj_set_size(ui->power_left_button, 110, 88);
   lv_obj_align(ui->power_left_button, LV_ALIGN_CENTER, -60, -6);
@@ -1361,6 +1451,27 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_text_align(ui->power_hint, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_font(ui->power_hint, UI_FONT_14, 0);
   lv_obj_align(ui->power_hint, LV_ALIGN_BOTTOM_MID, 0, -14);
+
+  /* Backflush overlay card */
+  ui->backflush_card = create_panel(ui->screen, 280, 220);
+
+  ui->backflush_title = lv_label_create(ui->backflush_card);
+  lv_obj_set_style_text_font(ui->backflush_title, UI_FONT_20, 0);
+  lv_obj_set_style_text_align(ui->backflush_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->backflush_title, 240);
+  lv_obj_align(ui->backflush_title, LV_ALIGN_TOP_MID, 0, 20);
+
+  ui->backflush_hint = lv_label_create(ui->backflush_card);
+  lv_obj_set_width(ui->backflush_hint, 226);
+  lv_label_set_long_mode(ui->backflush_hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(ui->backflush_hint, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->backflush_hint, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(ui->backflush_hint, LV_ALIGN_TOP_MID, 0, 52);
+
+  ui->backflush_start_button = create_button(ui->backflush_card, 130, 52, 0, 52, &ui->backflush_start_label);
+  bind_button(ui, BIND_BACKFLUSH_START, ui->backflush_start_button, LM_CTRL_UI_ACTION_START_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+  set_label_text(ui->backflush_start_label, "START", COLOR_BG);
+  set_hidden(ui->backflush_card, true);
 
   ui->presets_card = create_panel(ui->screen, 282, 196);
   ui->presets_title = lv_label_create(ui->presets_card);
@@ -1462,8 +1573,36 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_move_foreground(ui->ble_icon);
   lv_obj_move_foreground(ui->page_label);
 
+  /* Tap-zone strips — created LAST so they sit above all other widgets.
+   * Left/right are 100 px wide for easy access.
+   * Top/bottom are 80 px tall.
+   * Each zone is moved to foreground explicitly to guarantee z-order. */
+  {
+    lv_obj_t *tz;
+    tz = create_tap_zone(ui->screen, ui, LV_DIR_TOP,
+                         LM_CTRL_LCD_H_RES, TAP_ZONE_TB_SIZE, LV_ALIGN_TOP_MID);
+    lv_obj_move_foreground(tz);
+
+    tz = create_tap_zone(ui->screen, ui, LV_DIR_BOTTOM,
+                         LM_CTRL_LCD_H_RES, TAP_ZONE_TB_SIZE, LV_ALIGN_BOTTOM_MID);
+    lv_obj_move_foreground(tz);
+
+    tz = create_tap_zone(ui->screen, ui, LV_DIR_LEFT,
+                         TAP_ZONE_LR_SIZE,
+                         LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_TB_SIZE,
+                         LV_ALIGN_LEFT_MID);
+    lv_obj_move_foreground(tz);
+
+    tz = create_tap_zone(ui->screen, ui, LV_DIR_RIGHT,
+                         TAP_ZONE_LR_SIZE,
+                         LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_TB_SIZE,
+                         LV_ALIGN_RIGHT_MID);
+    lv_obj_move_foreground(tz);
+  }
+
   lm_ctrl_ui_render(ui, state, view);
-  ESP_LOGI(TAG, "UI initialized");
+  ESP_LOGI(TAG, "UI initialized — tap zones: LR=%dpx TB=%dpx swipe threshold=%dpx",
+           TAP_ZONE_LR_SIZE, TAP_ZONE_TB_SIZE, SWIPE_THRESHOLD_PX);
   return ESP_OK;
 }
 
@@ -1479,7 +1618,14 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
   ui->rendered_feature_mask = state->feature_mask;
   ui->rendered_shot_timer_visible = view != NULL && view->shot_timer_visible;
   ui->rendered_shot_timer_dismissable = view != NULL && view->shot_timer_dismissable;
+  ui->rendered_backflush_visible = view != NULL && view->backflush_visible;
   render_title(ui, view);
+
+  if (ui->rendered_backflush_visible) {
+    render_backflush_screen(ui);
+    render_connection_icons(ui, view);
+    return;
+  }
 
   if (ui->rendered_shot_timer_visible) {
     render_shot_timer_screen(ui, view);
