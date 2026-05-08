@@ -791,6 +791,7 @@ void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime) {
   memset(runtime, 0, sizeof(*runtime));
   reset_heat_state(&runtime->heat_state);
   reset_shot_timer_state(&runtime->shot_timer_state);
+  brew_timer_init(&runtime->brew_timer);
   ctrl_state_init(&runtime->state);
   if (ctrl_state_load(&runtime->state) != ESP_OK) {
     ESP_LOGW(TAG, "Falling back to default controller values");
@@ -819,6 +820,10 @@ void lm_ctrl_runtime_bootstrap(lm_ctrl_runtime_t *runtime) {
   runtime->last_power_status_version = lm_ctrl_power_status_version();
   runtime->last_machine_status_version = lm_ctrl_machine_link_status_version();
   runtime->last_preset_version = ctrl_state_preset_version();
+  brew_timer_tick(&runtime->brew_timer, false /* brewing_active: wire when machine link exposes it */);
+  if (runtime->state.screen == CTRL_SCREEN_BREW_TIMER && needs_render != NULL) {
+    *needs_render = true; /* always refresh when brew timer is visible */
+  }
   maybe_request_cloud_probe(&runtime->last_cloud_probe_request_us);
   maybe_request_value_sync(&runtime->state);
   maybe_request_periodic_value_refresh(&runtime->last_ble_refresh_request_us, &runtime->last_cloud_refresh_request_us);
@@ -1060,6 +1065,29 @@ void lm_ctrl_runtime_handle_input_event(
         (void)lm_ctrl_haptic_click();
       }
       break;
+    case LM_CTRL_EVENT_OPEN_BREW_TIMER:
+      brew_timer_reset(&runtime->brew_timer);
+      runtime->state.screen = CTRL_SCREEN_BREW_TIMER;
+      (void)lm_ctrl_haptic_click();
+      break;
+    case LM_CTRL_EVENT_CLOSE_BREW_TIMER:
+      brew_timer_reset(&runtime->brew_timer);
+      runtime->state.screen = CTRL_SCREEN_MAIN;
+      (void)lm_ctrl_haptic_click();
+      break;
+    case LM_CTRL_EVENT_TOGGLE_BREW_TIMER_RUN:
+      runtime->brew_timer.manual_override = true;
+      if (runtime->brew_timer.running) {
+        brew_timer_stop(&runtime->brew_timer);
+      } else {
+        brew_timer_start(&runtime->brew_timer);
+      }
+      (void)lm_ctrl_haptic_click();
+      break;
+    case LM_CTRL_EVENT_RESET_BREW_TIMER:
+      brew_timer_reset(&runtime->brew_timer);
+      (void)lm_ctrl_haptic_click();
+      break;
     case LM_CTRL_EVENT_OPEN_SETTINGS:
       runtime->state.screen = CTRL_SCREEN_SETTINGS;
       (void)lm_ctrl_haptic_click();
@@ -1092,7 +1120,9 @@ void lm_ctrl_runtime_handle_input_event(
       (void)lm_ctrl_haptic_click();
       break;
     case LM_CTRL_EVENT_CLOSE_SCREEN:
-      if (runtime->state.screen == CTRL_SCREEN_SETTINGS) {
+      if (runtime->state.screen == CTRL_SCREEN_SETTINGS ||
+          runtime->state.screen == CTRL_SCREEN_BREW_TIMER) {
+        brew_timer_reset(&runtime->brew_timer);
         runtime->state.screen = CTRL_SCREEN_MAIN;
       } else {
         ctrl_close_overlay(&runtime->state);
@@ -1311,6 +1341,14 @@ void lm_ctrl_runtime_build_ui_view(const lm_ctrl_runtime_t *runtime, lm_ctrl_ui_
   view->preset_load_enabled = access.preset_load_enabled;
   view->heat_progress_permille = heat_state_progress_permille(&runtime->heat_state);
   view->custom_logo = wifi_info.has_custom_logo ? lm_ctrl_wifi_get_custom_logo() : NULL;
+  {
+    const float elapsed_s = brew_timer_elapsed_s(&runtime->brew_timer);
+    const int whole = (int)elapsed_s;
+    const int tenth = (int)((elapsed_s - (float)whole) * 10.0f);
+    snprintf(view->brew_timer_text, sizeof(view->brew_timer_text),
+             "%d.%d", whole, tenth);
+    view->brew_timer_running = runtime->brew_timer.running;
+  }
   view->backflush_visible = runtime->backflush_open;
   view->pending_edit = runtime->pending_edit;
   view->pending_edit_focus = runtime->pending_edit_focus;

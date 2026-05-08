@@ -10,7 +10,7 @@
  *  The last slot is always the Backflush page. */
 #define LM_CTRL_UI_MAIN_PAGE_COUNT 9
 /** Maximum number of touch bindings stored for button-like actions. */
-#define LM_CTRL_UI_BINDING_COUNT 15
+#define LM_CTRL_UI_BINDING_COUNT 17
 /** Maximum setup status text length passed into the UI view model. */
 #define LM_CTRL_UI_STATUS_TEXT_LEN 256
 /** Maximum setup QR payload length passed into the UI view model. */
@@ -42,6 +42,8 @@ typedef struct {
   bool select_mode_active;
   uint8_t select_field_index;   /**< 0=first field (infuse), 1=second (pause) */
   char shot_timer_text[24];
+  char brew_timer_text[16];     /**< formatted SS.D */
+  bool brew_timer_running;
   char heat_eta_text[16];
   char setup_status_text[LM_CTRL_UI_STATUS_TEXT_LEN];
   char setup_qr_payload[LM_CTRL_UI_SETUP_QR_LEN];
@@ -66,6 +68,10 @@ typedef enum {
   LM_CTRL_UI_ACTION_CONFIRM_VALUE,
   LM_CTRL_UI_ACTION_OPEN_SETTINGS,
   LM_CTRL_UI_ACTION_CONNECT_MACHINE,
+  LM_CTRL_UI_ACTION_OPEN_BREW_TIMER,
+  LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER,
+  LM_CTRL_UI_ACTION_TOGGLE_BREW_TIMER_RUN,
+  LM_CTRL_UI_ACTION_RESET_BREW_TIMER,
 } lm_ctrl_ui_action_t;
 
 /** Callback invoked when the UI needs the main loop to handle a touch action. */
@@ -149,11 +155,22 @@ struct lm_ctrl_ui_s {
 
   /* Dashboard panels (shown when focus is CTRL_FOCUS_DASHBOARD) — read-only */
   lv_obj_t *dash_clock_panel;
-  lv_obj_t *dash_clock_hhmm;
+  lv_obj_t *dash_clock_hh;
+  lv_obj_t *dash_clock_mm;
+  lv_obj_t *dash_clock_hhmm;   /**< kept for no-sync placeholder */
   lv_obj_t *dash_clock_no_sync;
   lv_obj_t *dash_brew_count;
   lv_obj_t *dash_temp_panel;
   lv_obj_t *dash_temp_value;    /**< large read-only temperature display */
+
+  /* Brew timer screen */
+  lv_obj_t *brew_timer_card;
+  lv_obj_t *brew_timer_value;
+  lv_obj_t *brew_timer_hint;
+  lv_obj_t *brew_timer_startstop_button;
+  lv_obj_t *brew_timer_startstop_label;
+  lv_obj_t *brew_timer_reset_button;
+  lv_obj_t *brew_timer_reset_label;
 
   /* Pre-brew combined page (CTRL_FOCUS_PREBREW) */
   lv_obj_t *prebrew_card;

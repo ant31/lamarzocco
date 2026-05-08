@@ -121,6 +121,7 @@ typedef enum {
   CTRL_SCREEN_SETUP_RESET_ARM,
   CTRL_SCREEN_SETUP_RESET_CONFIRM,
   CTRL_SCREEN_SETTINGS,
+  CTRL_SCREEN_BREW_TIMER,
 } ctrl_screen_t;
 
 /** Recovery actions exposed after the hidden setup reset gesture has been armed. */

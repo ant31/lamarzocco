@@ -15,6 +15,7 @@
 #include "lm_ctrl_fonts.h"
 #include "board_config.h"
 #include "board_backlight.h"
+#include "brew_timer.h"
 #include "dashboard_clock.h"
 #include "machine_link_types.h"
 #include "ui_theme.h"
@@ -65,6 +66,8 @@ enum {
   BIND_SETTINGS_BL_UP,
   BIND_SETTINGS_RESET,
   BIND_SETUP_CONNECT,
+  BIND_BREW_TIMER_STARTSTOP,
+  BIND_BREW_TIMER_RESET,
 };
 
 static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
@@ -603,6 +606,13 @@ static void handle_tap_zone(lv_event_t *event) {
     return;
   }
 
+  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
+    if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
+    }
+    return;
+  }
+
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
@@ -723,6 +733,13 @@ static void handle_touch_up(lv_event_t *event) {
     return;
   }
 
+  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
+    if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
+    }
+    return;
+  }
+
   switch (ui->rendered_screen) {
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
@@ -775,8 +792,8 @@ static void handle_main_long_press(lv_event_t *event) {
     return;
   }
 
-  /* Long press = jump back to dashboard */
-  dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, CTRL_FOCUS_DASHBOARD);
+  /* Long press on main screen → open brew timer */
+  dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
 }
 
 static void render_backflush_screen(
@@ -933,6 +950,14 @@ static void handle_screen_gesture(lv_event_t *event) {
     if (ui->rendered_shot_timer_dismissable &&
         (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT || dir == LV_DIR_TOP || dir == LV_DIR_BOTTOM)) {
       dispatch_action_direct(ui, LM_CTRL_UI_ACTION_DISMISS_SHOT_TIMER, CTRL_FOCUS_TEMPERATURE);
+      lv_indev_wait_release(indev);
+    }
+    return;
+  }
+
+  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
+    if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
       lv_indev_wait_release(indev);
     }
     return;
@@ -1115,14 +1140,20 @@ static void render_dashboard_screen(
   set_hidden(ui->dash_clock_panel, false);
   set_hidden(ui->dash_temp_panel, false);
 
-  /* Clock panel — big HH:MM, read-only */
+  /* Clock panel — HH stacked above MM, read-only */
   dashboard_clock_read(&clock);
   if (clock.valid) {
-    snprintf(buf, sizeof(buf), "%02u:%02u", clock.hours, clock.minutes);
-    set_label_text(ui->dash_clock_hhmm, buf, COLOR_TEXT);
-    set_hidden(ui->dash_clock_hhmm, false);
+    snprintf(buf, sizeof(buf), "%02u", clock.hours);
+    set_label_text(ui->dash_clock_hh, buf, COLOR_TEXT);
+    snprintf(buf, sizeof(buf), "%02u", clock.minutes);
+    set_label_text(ui->dash_clock_mm, buf, COLOR_TEXT);
+    set_hidden(ui->dash_clock_hh, false);
+    set_hidden(ui->dash_clock_mm, false);
+    set_hidden(ui->dash_clock_hhmm, false); /* colon */
     set_hidden(ui->dash_clock_no_sync, true);
   } else {
+    set_hidden(ui->dash_clock_hh, true);
+    set_hidden(ui->dash_clock_mm, true);
     set_hidden(ui->dash_clock_hhmm, true);
     set_hidden(ui->dash_clock_no_sync, false);
   }
@@ -1203,6 +1234,51 @@ static void render_prebrew_screen(
   if (view != NULL && view->heat_arc_visible) {
     lv_arc_set_value(ui->heat_arc, view->heat_progress_permille);
   }
+}
+
+static void render_brew_timer_screen(
+  lm_ctrl_ui_t *ui,
+  const lm_ctrl_ui_view_t *view
+) {
+  if (ui == NULL || view == NULL) {
+    return;
+  }
+
+  set_hidden(ui->main_card, true);
+  set_hidden(ui->presets_card, true);
+  set_hidden(ui->setup_card, true);
+  set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, true);
+  set_hidden(ui->prebrew_card, true);
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->settings_card, true);
+  set_hidden(ui->setup_reset_arc, true);
+  set_hidden(ui->heat_arc, true);
+  set_hidden(ui->page_label, true);
+  set_hidden(ui->setup_secondary_button, true);
+  set_hidden(ui->setup_primary_button, true);
+  set_hidden(ui->power_left_button, true);
+  set_hidden(ui->power_right_button, true);
+  set_hidden(ui->power_hint, true);
+  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+    set_hidden(ui->page_dots[i], true);
+  }
+
+  set_hidden(ui->brew_timer_card, false);
+
+  set_label_text(ui->brew_timer_value, view->brew_timer_text, COLOR_ACTIVE);
+  set_label_text(
+    ui->brew_timer_startstop_label,
+    view->brew_timer_running ? "Stop" : "Start",
+    view->brew_timer_running ? COLOR_BG : COLOR_BG
+  );
+  lv_obj_set_style_bg_color(
+    ui->brew_timer_startstop_button,
+    view->brew_timer_running ? COLOR_RING : COLOR_ACTIVE,
+    0
+  );
+  set_label_text(ui->brew_timer_hint, "Swipe down to close", COLOR_MUTED);
 }
 
 static void render_main_screen(
@@ -1942,20 +2018,38 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_clear_flag(ui->dash_clock_panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(ui->dash_clock_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* HH:MM — the main clock label, centered vertically in upper 3/4 */
+  /* HH — hours, upper half of the clock panel */
+  ui->dash_clock_hh = lv_label_create(ui->dash_clock_panel);
+  lv_obj_set_style_text_font(ui->dash_clock_hh, UI_FONT_40, 0);
+  lv_obj_set_style_text_align(ui->dash_clock_hh, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_letter_space(ui->dash_clock_hh, -2, 0);
+  lv_obj_set_width(ui->dash_clock_hh, 186);
+  lv_obj_align(ui->dash_clock_hh, LV_ALIGN_CENTER, 0, -52);
+
+  /* MM — minutes, lower half of the clock panel */
+  ui->dash_clock_mm = lv_label_create(ui->dash_clock_panel);
+  lv_obj_set_style_text_font(ui->dash_clock_mm, UI_FONT_40, 0);
+  lv_obj_set_style_text_align(ui->dash_clock_mm, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_letter_space(ui->dash_clock_mm, -2, 0);
+  lv_obj_set_width(ui->dash_clock_mm, 186);
+  lv_obj_align(ui->dash_clock_mm, LV_ALIGN_CENTER, 0, 4);
+
+  /* Small colon separator between HH and MM */
   ui->dash_clock_hhmm = lv_label_create(ui->dash_clock_panel);
-  lv_obj_set_style_text_font(ui->dash_clock_hhmm, UI_FONT_40, 0);
+  lv_obj_set_style_text_font(ui->dash_clock_hhmm, UI_FONT_28, 0);
   lv_obj_set_style_text_align(ui->dash_clock_hhmm, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->dash_clock_hhmm, 186);
-  lv_obj_align(ui->dash_clock_hhmm, LV_ALIGN_CENTER, 0, -15);
+  lv_obj_align(ui->dash_clock_hhmm, LV_ALIGN_CENTER, 0, -24);
+  lv_label_set_text(ui->dash_clock_hhmm, ":");
+  lv_obj_set_style_text_color(ui->dash_clock_hhmm, COLOR_MUTED, 0);
 
-  /* --:-- shown when SNTP not synced */
+  /* --/-- shown when SNTP not synced */
   ui->dash_clock_no_sync = lv_label_create(ui->dash_clock_panel);
   lv_obj_set_style_text_font(ui->dash_clock_no_sync, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->dash_clock_no_sync, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->dash_clock_no_sync, 186);
-  lv_obj_align(ui->dash_clock_no_sync, LV_ALIGN_CENTER, 0, -15);
-  lv_label_set_text(ui->dash_clock_no_sync, "--:--");
+  lv_obj_align(ui->dash_clock_no_sync, LV_ALIGN_CENTER, 0, -24);
+  lv_label_set_text(ui->dash_clock_no_sync, "--");
   lv_obj_set_style_text_color(ui->dash_clock_no_sync, COLOR_MUTED, 0);
 
   /* Brew-count badge — bottom of clock panel */
@@ -1986,6 +2080,45 @@ esp_err_t lm_ctrl_ui_init(
 
   set_hidden(ui->dash_clock_panel, true);
   set_hidden(ui->dash_temp_panel, true);
+
+  /* ── Brew Timer screen ────────────────────────────────────────────────── */
+  ui->brew_timer_card = create_panel(ui->screen, 300, 260);
+
+  ui->brew_timer_value = lv_label_create(ui->brew_timer_card);
+  lv_obj_set_style_text_font(ui->brew_timer_value, UI_FONT_40, 0);
+  lv_obj_set_style_text_align(ui->brew_timer_value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_letter_space(ui->brew_timer_value, 4, 0);
+  lv_obj_set_width(ui->brew_timer_value, 280);
+  lv_obj_align(ui->brew_timer_value, LV_ALIGN_CENTER, 0, -40);
+  lv_label_set_text(ui->brew_timer_value, "0.0");
+
+  ui->brew_timer_startstop_button = create_button(
+    ui->brew_timer_card, 120, 46, -40, 40, &ui->brew_timer_startstop_label);
+  lv_obj_set_style_bg_color(ui->brew_timer_startstop_button, COLOR_ACTIVE, 0);
+  lv_obj_set_style_shadow_width(ui->brew_timer_startstop_button, 0, 0);
+  bind_button(ui, BIND_BREW_TIMER_STARTSTOP, ui->brew_timer_startstop_button,
+              LM_CTRL_UI_ACTION_TOGGLE_BREW_TIMER_RUN, CTRL_FOCUS_TEMPERATURE);
+  lv_label_set_text(ui->brew_timer_startstop_label, "Start");
+  lv_obj_set_style_text_color(ui->brew_timer_startstop_label, COLOR_BG, 0);
+
+  ui->brew_timer_reset_button = create_button(
+    ui->brew_timer_card, 90, 46, 72, 40, &ui->brew_timer_reset_label);
+  lv_obj_set_style_bg_color(ui->brew_timer_reset_button, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->brew_timer_reset_button, 0, 0);
+  lv_obj_set_style_border_width(ui->brew_timer_reset_button, 1, 0);
+  lv_obj_set_style_border_color(ui->brew_timer_reset_button, COLOR_RING, 0);
+  bind_button(ui, BIND_BREW_TIMER_RESET, ui->brew_timer_reset_button,
+              LM_CTRL_UI_ACTION_RESET_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
+  lv_label_set_text(ui->brew_timer_reset_label, "Reset");
+  lv_obj_set_style_text_color(ui->brew_timer_reset_label, COLOR_TEXT, 0);
+
+  ui->brew_timer_hint = lv_label_create(ui->brew_timer_card);
+  lv_obj_set_width(ui->brew_timer_hint, 260);
+  lv_obj_set_style_text_font(ui->brew_timer_hint, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->brew_timer_hint, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(ui->brew_timer_hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+  set_hidden(ui->brew_timer_card, true);
 
   /* ── Pre-brew combined page (CTRL_FOCUS_PREBREW) ──────────────────────── */
   ui->prebrew_card = create_panel(ui->screen, 280, 220);
@@ -2208,13 +2341,14 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
   ui->rendered_shot_timer_dismissable = view != NULL && view->shot_timer_dismissable;
   ui->rendered_backflush_visible = view != NULL && view->backflush_visible;
 
-  /* Ensure settings card is hidden unless we are on the settings screen */
   if (state->screen != CTRL_SCREEN_SETTINGS) {
     set_hidden(ui->settings_card, true);
   }
-  /* Ensure prebrew card is hidden except when on prebrew page */
   if (!(state->screen == CTRL_SCREEN_MAIN && state->focus == CTRL_FOCUS_PREBREW)) {
     set_hidden(ui->prebrew_card, true);
+  }
+  if (state->screen != CTRL_SCREEN_BREW_TIMER) {
+    set_hidden(ui->brew_timer_card, true);
   }
 
   render_title(ui, view);
@@ -2236,6 +2370,9 @@ void lm_ctrl_ui_render(lm_ctrl_ui_t *ui, const ctrl_state_t *state, const lm_ctr
       break;
     case CTRL_SCREEN_SETTINGS:
       render_settings_screen(ui);
+      break;
+    case CTRL_SCREEN_BREW_TIMER:
+      render_brew_timer_screen(ui, view);
       break;
     case CTRL_SCREEN_MAIN:
     default:

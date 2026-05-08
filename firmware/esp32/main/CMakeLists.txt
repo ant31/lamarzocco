@@ -35,6 +35,7 @@ idf_component_register(
     "setup_portal_presenter.c"
     "setup_portal_routes.c"
     "brew_counter.c"
+    "brew_timer.c"
     "dashboard_clock.c"
     "setup_portal_routes_shared.c"
     "storage_security.c"

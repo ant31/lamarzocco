@@ -97,6 +97,18 @@ static void ui_action_cb(lm_ctrl_ui_action_t action, ctrl_focus_t focus, void *u
     case LM_CTRL_UI_ACTION_CONNECT_MACHINE:
       event_type = LM_CTRL_EVENT_CONNECT_MACHINE;
       break;
+    case LM_CTRL_UI_ACTION_OPEN_BREW_TIMER:
+      event_type = LM_CTRL_EVENT_OPEN_BREW_TIMER;
+      break;
+    case LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER:
+      event_type = LM_CTRL_EVENT_CLOSE_BREW_TIMER;
+      break;
+    case LM_CTRL_UI_ACTION_TOGGLE_BREW_TIMER_RUN:
+      event_type = LM_CTRL_EVENT_TOGGLE_BREW_TIMER_RUN;
+      break;
+    case LM_CTRL_UI_ACTION_RESET_BREW_TIMER:
+      event_type = LM_CTRL_EVENT_RESET_BREW_TIMER;
+      break;
     default:
       return;
   }

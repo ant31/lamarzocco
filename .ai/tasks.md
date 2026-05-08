@@ -1,8 +1,12 @@
-[ ] Long press display timer and it starts quick pooling to display timer and weight (if available) as soon as the machine start brewing.
+[x] Long press display timer and it starts quick pooling to display timer and weight (if available) as soon as the machine start brewing.
     It must get the brewing time as accurate as possible. Add manuall start /stop button too
     The timer must show the number in big to the decimal
-[ ] Wire brew_counter_update() to a real brewing_active signal once machine link exposes it.
-    Infrastructure is in place (brew_counter.h/c, NVS keys, dashboard badge slot).
+    NOTE: brew_timer module created (brew_timer.h/c). CTRL_SCREEN_BREW_TIMER added.
+    Long-press on main screen opens the timer. Start/Stop and Reset buttons.
+    Swipe up/down to close. Auto-start on brewing_active (wired to false until
+    machine link exposes it). Timer shows SS.D in large 40pt font.
+[ ] Wire brew_counter_update() and brew_timer auto-start to a real brewing_active
+    signal once machine_link_types.h exposes lm_ctrl_machine_link_info_t.brewing_active.
 
 [x] Dashboard read-only, combined pre-brew page, encoder navigates pages.
     NOTE: Dashboard is now pure display (clock + large temp), no selection/edit.
