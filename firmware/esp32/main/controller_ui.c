@@ -1316,7 +1316,7 @@ static void render_brew_timer_screen(
     view->brew_timer_running ? COLOR_RING : COLOR_ACTIVE,
     0
   );
-  set_label_text(ui->brew_timer_hint, "Swipe left/right to navigate", COLOR_MUTED);
+  set_label_text(ui->brew_timer_hint, "", COLOR_MUTED);
 }
 
 static void render_main_screen(

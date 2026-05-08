@@ -903,6 +903,10 @@ void lm_ctrl_runtime_handle_input_event(
           brew_timer_reset(&runtime->brew_timer);
           runtime->state.screen = CTRL_SCREEN_MAIN;
         }
+        /* Leaving backflush page — close the overlay */
+        if (runtime->backflush_open && next_focus != CTRL_FOCUS_BACKFLUSH) {
+          runtime->backflush_open = false;
+        }
         /* Entering backflush page */
         if (next_focus == CTRL_FOCUS_BACKFLUSH) {
           runtime->state.focus = CTRL_FOCUS_BACKFLUSH;
