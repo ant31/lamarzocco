@@ -1127,6 +1127,8 @@ static void render_dashboard_screen(
 ) {
   char buf[32];
   lm_ctrl_clock_t clock = {0};
+  const int page_index  = main_page_index(state->feature_mask, CTRL_FOCUS_DASHBOARD);
+  const size_t page_count = main_page_count(state->feature_mask);
 
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
@@ -1142,14 +1144,11 @@ static void render_dashboard_screen(
   set_hidden(ui->power_left_button, true);
   set_hidden(ui->power_right_button, true);
   set_hidden(ui->power_hint, true);
-  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
-    set_hidden(ui->page_dots[i], true);
-  }
 
   set_hidden(ui->dash_clock_panel, false);
   set_hidden(ui->dash_temp_panel, false);
 
-  /* Clock panel — HH stacked above MM, read-only */
+  /* Clock panel */
   dashboard_clock_read(&clock);
   if (clock.valid) {
     snprintf(buf, sizeof(buf), "%02u", clock.hours);
@@ -1158,7 +1157,7 @@ static void render_dashboard_screen(
     set_label_text(ui->dash_clock_mm, buf, COLOR_TEXT);
     set_hidden(ui->dash_clock_hh, false);
     set_hidden(ui->dash_clock_mm, false);
-    set_hidden(ui->dash_clock_hhmm, false); /* colon */
+    set_hidden(ui->dash_clock_hhmm, false);
     set_hidden(ui->dash_clock_no_sync, true);
   } else {
     set_hidden(ui->dash_clock_hh, true);
@@ -1167,16 +1166,44 @@ static void render_dashboard_screen(
     set_hidden(ui->dash_clock_no_sync, false);
   }
 
+  /* Shot count — plain number, no icon */
   set_hidden(ui->dash_brew_count, false);
-  snprintf(buf, sizeof(buf), "\xe2\x98\x95 %u", 0U); /* ☕ placeholder */
+  snprintf(buf, sizeof(buf), "%u shots", 0U);
   set_label_text(ui->dash_brew_count, buf, COLOR_MUTED);
 
-  /* Temperature panel — large read-only value */
+  /* Coffee / Temperature section */
+  set_label_text(ui->dash_temp_title, "Coffee", COLOR_MUTED);
   snprintf(buf, sizeof(buf), "%.1f\xc2\xb0""C", state->values.temperature_c);
   set_label_text(ui->dash_temp_value, buf, COLOR_TEXT);
 
+  /* Pre-brew section */
+  set_label_text(ui->dash_pb_title, "Pre-brew", COLOR_MUTED);
+  snprintf(buf, sizeof(buf), "%.1fs \xc2\xb7 %.1fs",
+           state->values.infuse_s, state->values.pause_s);
+  set_label_text(ui->dash_pb_inline, buf, COLOR_TEXT);
+
+  /* Steam section */
+  set_label_text(ui->dash_steam_title, "Steam", COLOR_MUTED);
+  set_label_text(ui->dash_steam_value,
+                 ctrl_steam_level_enabled(state->values.steam_level)
+                   ? ctrl_steam_level_label(state->values.steam_level)
+                   : "Off",
+                 COLOR_TEXT);
+
   if (view != NULL && view->heat_arc_visible) {
     lv_arc_set_value(ui->heat_arc, view->heat_progress_permille);
+  }
+
+  /* Page navigation dots — shows user where they are */
+  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+    if (i >= page_count) {
+      set_hidden(ui->page_dots[i], true);
+      continue;
+    }
+    const int x_offset = (int)((int)i * 17) - (int)(((int)page_count - 1) * 17 / 2);
+    lv_obj_align(ui->page_dots[i], LV_ALIGN_CENTER, x_offset, 106);
+    set_hidden(ui->page_dots[i], false);
+    style_page_dot(ui->page_dots[i], (int)i == page_index);
   }
 }
 
@@ -1227,29 +1254,20 @@ static void render_prebrew_screen(
 
   set_hidden(ui->prebrew_card, false);
 
-  /* Page title — same font/color/position as other main-screen pages */
   set_label_text(ui->prebrew_title, "Pre-brew", COLOR_ACTIVE);
+  set_label_text(ui->prebrew_hint,
+    "Pulse water before\nthe shot starts",
+    COLOR_MUTED);
 
-  /* IN row */
-  set_label_text(ui->prebrew_in_title, "On", in_tc);
+  /* IN column */
+  set_label_text(ui->prebrew_in_title,  "IN",  in_tc);
   snprintf(buf, sizeof(buf), "%.1f s", state->values.infuse_s);
-  set_label_text(ui->prebrew_in_value, buf, in_vc);
+  set_label_text(ui->prebrew_in_value,  buf, in_vc);
 
-  /* OUT row */
-  set_label_text(ui->prebrew_out_title, "Off", out_tc);
+  /* OUT column */
+  set_label_text(ui->prebrew_out_title, "OUT", out_tc);
   snprintf(buf, sizeof(buf), "%.1f s", state->values.pause_s);
   set_label_text(ui->prebrew_out_value, buf, out_vc);
-
-  /* Hint guides the user through the 3-state flow */
-  const char *hint_text;
-  if (pending) {
-    hint_text = "Rotate to edit  \xc2\xb7  Press to confirm";
-  } else if (sel) {
-    hint_text = "Rotate to switch  \xc2\xb7  Press to edit";
-  } else {
-    hint_text = "Press to select";
-  }
-  set_label_text(ui->prebrew_hint, hint_text, COLOR_MUTED);
 
   if (view != NULL && view->heat_arc_visible) {
     lv_arc_set_value(ui->heat_arc, view->heat_progress_permille);
@@ -1886,7 +1904,7 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_align(ui->shot_timer_value, LV_ALIGN_CENTER, 0, -6);
 
   bind_button(ui, BIND_CONFIRM_VALUE, ui->value, LM_CTRL_UI_ACTION_CONFIRM_VALUE, CTRL_FOCUS_TEMPERATURE);
-  lv_obj_add_event_cb(ui->main_card, handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
+  lv_obj_add_event_cb(ui->main_card,    handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
 
   ui->power_left_button = lv_btn_create(ui->main_card);
   lv_obj_set_size(ui->power_left_button, 110, 88);
@@ -2039,7 +2057,7 @@ esp_err_t lm_ctrl_ui_init(
 
   /* ── Dashboard panels ────────────────────────────────────────────────── */
 
-  /* Clock panel — left side, very large HH:MM */
+  /* Clock panel — left side, large stacked HH / MM */
   ui->dash_clock_panel = lv_obj_create(ui->screen);
   lv_obj_remove_style_all(ui->dash_clock_panel);
   lv_obj_set_size(ui->dash_clock_panel, 190, 240);
@@ -2050,24 +2068,25 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_shadow_width(ui->dash_clock_panel, 0, 0);
   lv_obj_clear_flag(ui->dash_clock_panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(ui->dash_clock_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_flag(ui->dash_clock_panel, LV_OBJ_FLAG_EVENT_BUBBLE);
+  lv_obj_add_event_cb(ui->dash_clock_panel, handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
 
-  /* HH — hours, upper half of the clock panel */
   ui->dash_clock_hh = lv_label_create(ui->dash_clock_panel);
   lv_obj_set_style_text_font(ui->dash_clock_hh, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->dash_clock_hh, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_letter_space(ui->dash_clock_hh, -2, 0);
   lv_obj_set_width(ui->dash_clock_hh, 186);
   lv_obj_align(ui->dash_clock_hh, LV_ALIGN_CENTER, 0, -52);
+  lv_obj_add_flag(ui->dash_clock_hh, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* MM — minutes, lower half of the clock panel */
   ui->dash_clock_mm = lv_label_create(ui->dash_clock_panel);
   lv_obj_set_style_text_font(ui->dash_clock_mm, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->dash_clock_mm, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_letter_space(ui->dash_clock_mm, -2, 0);
   lv_obj_set_width(ui->dash_clock_mm, 186);
   lv_obj_align(ui->dash_clock_mm, LV_ALIGN_CENTER, 0, 4);
+  lv_obj_add_flag(ui->dash_clock_mm, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* Small colon separator between HH and MM */
   ui->dash_clock_hhmm = lv_label_create(ui->dash_clock_panel);
   lv_obj_set_style_text_font(ui->dash_clock_hhmm, UI_FONT_28, 0);
   lv_obj_set_style_text_align(ui->dash_clock_hhmm, LV_TEXT_ALIGN_CENTER, 0);
@@ -2075,8 +2094,8 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_align(ui->dash_clock_hhmm, LV_ALIGN_CENTER, 0, -24);
   lv_label_set_text(ui->dash_clock_hhmm, ":");
   lv_obj_set_style_text_color(ui->dash_clock_hhmm, COLOR_MUTED, 0);
+  lv_obj_add_flag(ui->dash_clock_hhmm, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* --/-- shown when SNTP not synced */
   ui->dash_clock_no_sync = lv_label_create(ui->dash_clock_panel);
   lv_obj_set_style_text_font(ui->dash_clock_no_sync, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->dash_clock_no_sync, LV_TEXT_ALIGN_CENTER, 0);
@@ -2084,15 +2103,17 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_align(ui->dash_clock_no_sync, LV_ALIGN_CENTER, 0, -24);
   lv_label_set_text(ui->dash_clock_no_sync, "--");
   lv_obj_set_style_text_color(ui->dash_clock_no_sync, COLOR_MUTED, 0);
+  lv_obj_add_flag(ui->dash_clock_no_sync, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* Brew-count badge — bottom of clock panel */
+  /* Shot count badge — no icon, plain number */
   ui->dash_brew_count = lv_label_create(ui->dash_clock_panel);
   lv_obj_set_style_text_font(ui->dash_brew_count, UI_FONT_14, 0);
   lv_obj_set_style_text_align(ui->dash_brew_count, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->dash_brew_count, 186);
   lv_obj_align(ui->dash_brew_count, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_add_flag(ui->dash_brew_count, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* Temperature panel — right side, read-only, large */
+  /* Right info panel — Coffee temp, Pre-brew, Steam stacked compactly */
   ui->dash_temp_panel = lv_obj_create(ui->screen);
   lv_obj_remove_style_all(ui->dash_temp_panel);
   lv_obj_set_size(ui->dash_temp_panel, 188, 240);
@@ -2103,13 +2124,56 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_shadow_width(ui->dash_temp_panel, 0, 0);
   lv_obj_clear_flag(ui->dash_temp_panel, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(ui->dash_temp_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_flag(ui->dash_temp_panel, LV_OBJ_FLAG_EVENT_BUBBLE);
+  lv_obj_add_event_cb(ui->dash_temp_panel, handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
 
-  /* Temperature value — centered in the full panel */
+  /* Coffee section */
+  ui->dash_temp_title = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_temp_title, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->dash_temp_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_temp_title, 184);
+  lv_obj_align(ui->dash_temp_title, LV_ALIGN_TOP_MID, 0, 16);
+  lv_label_set_text(ui->dash_temp_title, "Coffee");
+  lv_obj_add_flag(ui->dash_temp_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
   ui->dash_temp_value = lv_label_create(ui->dash_temp_panel);
-  lv_obj_set_style_text_font(ui->dash_temp_value, UI_FONT_40, 0);
+  lv_obj_set_style_text_font(ui->dash_temp_value, UI_FONT_28, 0);
   lv_obj_set_style_text_align(ui->dash_temp_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->dash_temp_value, 184);
-  lv_obj_align(ui->dash_temp_value, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_align(ui->dash_temp_value, LV_ALIGN_TOP_MID, 0, 36);
+  lv_obj_add_flag(ui->dash_temp_value, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  /* Pre-brew section */
+  ui->dash_pb_title = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_pb_title, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->dash_pb_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_pb_title, 184);
+  lv_obj_align(ui->dash_pb_title, LV_ALIGN_TOP_MID, 0, 90);
+  lv_label_set_text(ui->dash_pb_title, "Pre-brew");
+  lv_obj_add_flag(ui->dash_pb_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->dash_pb_inline = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_pb_inline, UI_FONT_16, 0);
+  lv_obj_set_style_text_align(ui->dash_pb_inline, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_pb_inline, 184);
+  lv_obj_align(ui->dash_pb_inline, LV_ALIGN_TOP_MID, 0, 112);
+  lv_obj_add_flag(ui->dash_pb_inline, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  /* Steam section */
+  ui->dash_steam_title = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_steam_title, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->dash_steam_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_steam_title, 184);
+  lv_obj_align(ui->dash_steam_title, LV_ALIGN_TOP_MID, 0, 152);
+  lv_label_set_text(ui->dash_steam_title, "Steam");
+  lv_obj_add_flag(ui->dash_steam_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->dash_steam_value = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_steam_value, UI_FONT_20, 0);
+  lv_obj_set_style_text_align(ui->dash_steam_value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_steam_value, 184);
+  lv_obj_align(ui->dash_steam_value, LV_ALIGN_TOP_MID, 0, 172);
+  lv_obj_add_flag(ui->dash_steam_value, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   set_hidden(ui->dash_clock_panel, true);
   set_hidden(ui->dash_temp_panel, true);
@@ -2155,56 +2219,63 @@ esp_err_t lm_ctrl_ui_init(
 
   /* ── Pre-brew combined page (CTRL_FOCUS_PREBREW) ──────────────────────── */
   ui->prebrew_card = create_panel(ui->screen, 280, 230);
+  lv_obj_add_flag(ui->prebrew_card, LV_OBJ_FLAG_EVENT_BUBBLE);
+  lv_obj_add_event_cb(ui->prebrew_card, handle_main_long_press, LV_EVENT_LONG_PRESSED, ui);
 
   /* Page title — same style as ui->focus on main_card */
   ui->prebrew_title = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_title, UI_FONT_20, 0);
   lv_obj_set_style_text_align(ui->prebrew_title, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_title, 250);
-  lv_obj_align(ui->prebrew_title, LV_ALIGN_TOP_MID, 0, 4);
+  lv_obj_align(ui->prebrew_title, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_add_flag(ui->prebrew_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  ui->prebrew_in_title = lv_label_create(ui->prebrew_card);
-  lv_obj_set_style_text_font(ui->prebrew_in_title, UI_FONT_16, 0);
-  lv_obj_set_style_text_align(ui->prebrew_in_title, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_width(ui->prebrew_in_title, 240);
-  lv_obj_align(ui->prebrew_in_title, LV_ALIGN_TOP_MID, 0, 42);
-
-  ui->prebrew_in_value = lv_label_create(ui->prebrew_card);
-  lv_obj_set_style_text_font(ui->prebrew_in_value, UI_FONT_40, 0);
-  lv_obj_set_style_text_align(ui->prebrew_in_value, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_width(ui->prebrew_in_value, 240);
-  lv_obj_align(ui->prebrew_in_value, LV_ALIGN_TOP_MID, 0, 68);
-
-  /* Divider line between IN and OUT sections */
-  {
-    static lv_point_t pts[2] = { {0, 0}, {240, 0} };
-    lv_obj_t *line = lv_line_create(ui->prebrew_card);
-    lv_line_set_points(line, pts, 2);
-    lv_obj_set_style_line_color(line, COLOR_RING, 0);
-    lv_obj_set_style_line_opa(line, LV_OPA_40, 0);
-    lv_obj_set_style_line_width(line, 1, 0);
-    lv_obj_align(line, LV_ALIGN_CENTER, 0, 4);
-    lv_obj_add_flag(line, LV_OBJ_FLAG_GESTURE_BUBBLE);
-  }
-
-  ui->prebrew_out_title = lv_label_create(ui->prebrew_card);
-  lv_obj_set_style_text_font(ui->prebrew_out_title, UI_FONT_16, 0);
-  lv_obj_set_style_text_align(ui->prebrew_out_title, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_width(ui->prebrew_out_title, 240);
-  lv_obj_align(ui->prebrew_out_title, LV_ALIGN_TOP_MID, 0, 120);
-
-  ui->prebrew_out_value = lv_label_create(ui->prebrew_card);
-  lv_obj_set_style_text_font(ui->prebrew_out_value, UI_FONT_40, 0);
-  lv_obj_set_style_text_align(ui->prebrew_out_value, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_width(ui->prebrew_out_value, 240);
-  lv_obj_align(ui->prebrew_out_value, LV_ALIGN_TOP_MID, 0, 146);
-
+  /* Description (replaces interaction hint) */
   ui->prebrew_hint = lv_label_create(ui->prebrew_card);
   lv_obj_set_width(ui->prebrew_hint, 240);
   lv_label_set_long_mode(ui->prebrew_hint, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(ui->prebrew_hint, UI_FONT_14, 0);
   lv_obj_set_style_text_align(ui->prebrew_hint, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(ui->prebrew_hint, LV_ALIGN_BOTTOM_MID, 0, -4);
+  lv_obj_align(ui->prebrew_hint, LV_ALIGN_TOP_MID, 0, 40);
+  lv_obj_add_flag(ui->prebrew_hint, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  /* IN column */
+  ui->prebrew_in_title = lv_label_create(ui->prebrew_card);
+  lv_obj_set_style_text_font(ui->prebrew_in_title, UI_FONT_14, 0);
+  lv_obj_align(ui->prebrew_in_title, LV_ALIGN_CENTER, -62, -20);
+  lv_obj_add_flag(ui->prebrew_in_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->prebrew_in_value = lv_label_create(ui->prebrew_card);
+  lv_obj_set_style_text_font(ui->prebrew_in_value, UI_FONT_28, 0);
+  lv_obj_set_style_text_align(ui->prebrew_in_value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->prebrew_in_value, 110);
+  lv_obj_align(ui->prebrew_in_value, LV_ALIGN_CENTER, -62, 10);
+  lv_obj_add_flag(ui->prebrew_in_value, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  /* Vertical divider */
+  {
+    static lv_point_t pts[2] = { {0, -40}, {0, 48} };
+    lv_obj_t *vline = lv_line_create(ui->prebrew_card);
+    lv_line_set_points(vline, pts, 2);
+    lv_obj_set_style_line_color(vline, COLOR_RING, 0);
+    lv_obj_set_style_line_opa(vline, LV_OPA_30, 0);
+    lv_obj_set_style_line_width(vline, 1, 0);
+    lv_obj_align(vline, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(vline, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  }
+
+  /* OUT column */
+  ui->prebrew_out_title = lv_label_create(ui->prebrew_card);
+  lv_obj_set_style_text_font(ui->prebrew_out_title, UI_FONT_14, 0);
+  lv_obj_align(ui->prebrew_out_title, LV_ALIGN_CENTER, 62, -20);
+  lv_obj_add_flag(ui->prebrew_out_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->prebrew_out_value = lv_label_create(ui->prebrew_card);
+  lv_obj_set_style_text_font(ui->prebrew_out_value, UI_FONT_28, 0);
+  lv_obj_set_style_text_align(ui->prebrew_out_value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->prebrew_out_value, 110);
+  lv_obj_align(ui->prebrew_out_value, LV_ALIGN_CENTER, 62, 10);
+  lv_obj_add_flag(ui->prebrew_out_value, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   set_hidden(ui->prebrew_card, true);
 

@@ -157,11 +157,16 @@ struct lm_ctrl_ui_s {
   lv_obj_t *dash_clock_panel;
   lv_obj_t *dash_clock_hh;
   lv_obj_t *dash_clock_mm;
-  lv_obj_t *dash_clock_hhmm;   /**< kept for no-sync placeholder */
+  lv_obj_t *dash_clock_hhmm;   /**< colon separator or no-sync placeholder */
   lv_obj_t *dash_clock_no_sync;
-  lv_obj_t *dash_brew_count;
+  lv_obj_t *dash_brew_count;   /**< daily shot count badge, no icon */
   lv_obj_t *dash_temp_panel;
-  lv_obj_t *dash_temp_value;    /**< large read-only temperature display */
+  lv_obj_t *dash_temp_title;   /**< "Coffee" label */
+  lv_obj_t *dash_temp_value;   /**< temperature value */
+  lv_obj_t *dash_pb_title;     /**< "Pre-brew" label */
+  lv_obj_t *dash_pb_inline;    /**< combined "3.0s · 1.5s" */
+  lv_obj_t *dash_steam_title;  /**< "Steam" label */
+  lv_obj_t *dash_steam_value;  /**< steam level text */
 
   /* Brew timer screen */
   lv_obj_t *brew_timer_card;
