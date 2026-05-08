@@ -531,8 +531,9 @@ static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta);
 
 /* Tap-zone strip sizes. Left/right are wide (100 px) so they are easy to
  * hit.  Top/bottom are 80 px tall. */
-#define TAP_ZONE_LR_SIZE 100
-#define TAP_ZONE_TB_SIZE 80
+#define TAP_ZONE_LR_SIZE  100
+#define TAP_ZONE_TOP_SIZE  36   /* narrow — presets swipe should be deliberate */
+#define TAP_ZONE_BOT_SIZE  70
 
 /* Double-tap detection for "go back" on the left zone. */
 #define DOUBLE_TAP_MAX_MS  400   /* max ms between two taps */
@@ -2241,54 +2242,56 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_text_font(ui->prebrew_title, UI_FONT_20, 0);
   lv_obj_set_style_text_align(ui->prebrew_title, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_title, 250);
-  lv_obj_align(ui->prebrew_title, LV_ALIGN_TOP_MID, 0, 10);
+  /* Align to same screen y as the focus label on main_card (TOP_MID + 22 on 192px card
+   * = TOP_MID + 41 on this 230px card, both panels centred at screen y=232). */
+  lv_obj_align(ui->prebrew_title, LV_ALIGN_TOP_MID, 0, 41);
   lv_obj_add_flag(ui->prebrew_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* Description (replaces interaction hint) */
+  /* Description text — below the title at the same relative gap */
   ui->prebrew_hint = lv_label_create(ui->prebrew_card);
   lv_obj_set_width(ui->prebrew_hint, 240);
   lv_label_set_long_mode(ui->prebrew_hint, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(ui->prebrew_hint, UI_FONT_14, 0);
   lv_obj_set_style_text_align(ui->prebrew_hint, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(ui->prebrew_hint, LV_ALIGN_TOP_MID, 0, 40);
+  lv_obj_align(ui->prebrew_hint, LV_ALIGN_TOP_MID, 0, 70);
   lv_obj_add_flag(ui->prebrew_hint, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-  /* IN column */
+  /* IN column — shifted down 10 px relative to card centre */
   ui->prebrew_in_title = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_in_title, UI_FONT_14, 0);
-  lv_obj_align(ui->prebrew_in_title, LV_ALIGN_CENTER, -62, -20);
+  lv_obj_align(ui->prebrew_in_title, LV_ALIGN_CENTER, -62, 0);
   lv_obj_add_flag(ui->prebrew_in_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   ui->prebrew_in_value = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_in_value, UI_FONT_28, 0);
   lv_obj_set_style_text_align(ui->prebrew_in_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_in_value, 110);
-  lv_obj_align(ui->prebrew_in_value, LV_ALIGN_CENTER, -62, 10);
+  lv_obj_align(ui->prebrew_in_value, LV_ALIGN_CENTER, -62, 26);
   lv_obj_add_flag(ui->prebrew_in_value, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   /* Vertical divider */
   {
-    static lv_point_t pts[2] = { {0, -40}, {0, 48} };
+    static lv_point_t pts[2] = { {0, -28}, {0, 54} };
     lv_obj_t *vline = lv_line_create(ui->prebrew_card);
     lv_line_set_points(vline, pts, 2);
     lv_obj_set_style_line_color(vline, COLOR_RING, 0);
     lv_obj_set_style_line_opa(vline, LV_OPA_30, 0);
     lv_obj_set_style_line_width(vline, 1, 0);
-    lv_obj_align(vline, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(vline, LV_ALIGN_CENTER, 0, 12);
     lv_obj_add_flag(vline, LV_OBJ_FLAG_GESTURE_BUBBLE);
   }
 
-  /* OUT column */
+  /* OUT column — shifted down 10 px relative to card centre */
   ui->prebrew_out_title = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_out_title, UI_FONT_14, 0);
-  lv_obj_align(ui->prebrew_out_title, LV_ALIGN_CENTER, 62, -20);
+  lv_obj_align(ui->prebrew_out_title, LV_ALIGN_CENTER, 62, 0);
   lv_obj_add_flag(ui->prebrew_out_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   ui->prebrew_out_value = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_out_value, UI_FONT_28, 0);
   lv_obj_set_style_text_align(ui->prebrew_out_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_out_value, 110);
-  lv_obj_align(ui->prebrew_out_value, LV_ALIGN_CENTER, 62, 10);
+  lv_obj_align(ui->prebrew_out_value, LV_ALIGN_CENTER, 62, 26);
   lv_obj_add_flag(ui->prebrew_out_value, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
   set_hidden(ui->prebrew_card, true);
@@ -2426,29 +2429,29 @@ esp_err_t lm_ctrl_ui_init(
   {
     lv_obj_t *tz;
     tz = create_tap_zone(ui->screen, ui, LV_DIR_TOP,
-                         LM_CTRL_LCD_H_RES, TAP_ZONE_TB_SIZE, LV_ALIGN_TOP_MID);
+                         LM_CTRL_LCD_H_RES, TAP_ZONE_TOP_SIZE, LV_ALIGN_TOP_MID);
     lv_obj_move_foreground(tz);
 
     tz = create_tap_zone(ui->screen, ui, LV_DIR_BOTTOM,
-                         LM_CTRL_LCD_H_RES, TAP_ZONE_TB_SIZE, LV_ALIGN_BOTTOM_MID);
+                         LM_CTRL_LCD_H_RES, TAP_ZONE_BOT_SIZE, LV_ALIGN_BOTTOM_MID);
     lv_obj_move_foreground(tz);
 
     tz = create_tap_zone(ui->screen, ui, LV_DIR_LEFT,
                          TAP_ZONE_LR_SIZE,
-                         LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_TB_SIZE,
+                         LM_CTRL_LCD_V_RES - TAP_ZONE_TOP_SIZE - TAP_ZONE_BOT_SIZE,
                          LV_ALIGN_LEFT_MID);
     lv_obj_move_foreground(tz);
 
     tz = create_tap_zone(ui->screen, ui, LV_DIR_RIGHT,
                          TAP_ZONE_LR_SIZE,
-                         LM_CTRL_LCD_V_RES - 2 * TAP_ZONE_TB_SIZE,
+                         LM_CTRL_LCD_V_RES - TAP_ZONE_TOP_SIZE - TAP_ZONE_BOT_SIZE,
                          LV_ALIGN_RIGHT_MID);
     lv_obj_move_foreground(tz);
   }
 
   lm_ctrl_ui_render(ui, state, view);
-  ESP_LOGI(TAG, "UI initialized — tap zones: LR=%dpx TB=%dpx swipe threshold=%dpx",
-           TAP_ZONE_LR_SIZE, TAP_ZONE_TB_SIZE, SWIPE_THRESHOLD_PX);
+  ESP_LOGI(TAG, "UI initialized — tap zones: LR=%dpx top=%dpx bot=%dpx swipe threshold=%dpx",
+           TAP_ZONE_LR_SIZE, TAP_ZONE_TOP_SIZE, TAP_ZONE_BOT_SIZE, SWIPE_THRESHOLD_PX);
   return ESP_OK;
 }
 
