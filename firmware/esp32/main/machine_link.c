@@ -1035,6 +1035,9 @@ void lm_ctrl_machine_link_get_info(lm_ctrl_machine_link_info_t *info) {
   info->loaded_mask = s_link.loaded_mask;
   info->feature_mask = s_link.feature_mask;
   info->water_status = preferred_water_status_locked();
+  /* brewing_active is not yet exposed by BLE or cloud dashboards —
+   * stubbed false until the protocol layer surfaces it. */
+  info->brewing_active = false;
   portEXIT_CRITICAL(&s_link_lock);
 }
 

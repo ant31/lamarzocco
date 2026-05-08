@@ -44,6 +44,7 @@ typedef struct {
   char shot_timer_text[24];
   char brew_timer_text[16];     /**< formatted SS.D */
   bool brew_timer_running;
+  uint16_t daily_brew_count;
   char heat_eta_text[16];
   char setup_status_text[LM_CTRL_UI_STATUS_TEXT_LEN];
   char setup_qr_payload[LM_CTRL_UI_SETUP_QR_LEN];

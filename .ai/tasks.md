@@ -5,8 +5,11 @@
     Long-press on main screen opens the timer. Start/Stop and Reset buttons.
     Swipe up/down to close. Auto-start on brewing_active (wired to false until
     machine link exposes it). Timer shows SS.D in large 40pt font.
-[ ] Wire brew_counter_update() and brew_timer auto-start to a real brewing_active
-    signal once machine_link_types.h exposes lm_ctrl_machine_link_info_t.brewing_active.
+[x] Wire brew_counter_update() and brew_timer auto-start to a real brewing_active signal.
+    NOTE: `brewing_active` added to `lm_ctrl_machine_link_info_t`. Runtime tick now passes
+    the real signal to both brew_timer_tick() and brew_counter_update(). Field is stubbed
+    false in machine_link.c until BLE/cloud protocol layer surfaces the brewing state.
+    brew_counter is initialised and loaded in runtime_init. Daily count shown on dashboard.
 
 [x] Dashboard read-only, combined pre-brew page, encoder navigates pages.
     NOTE: Dashboard is now pure display (clock + large temp), no selection/edit.

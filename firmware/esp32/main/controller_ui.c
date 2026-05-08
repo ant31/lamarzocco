@@ -1168,7 +1168,7 @@ static void render_dashboard_screen(
 
   /* Shot count — plain number, no icon */
   set_hidden(ui->dash_brew_count, false);
-  snprintf(buf, sizeof(buf), "%u shots", 0U);
+  snprintf(buf, sizeof(buf), "%u shots", view != NULL ? (unsigned)view->daily_brew_count : 0U);
   set_label_text(ui->dash_brew_count, buf, COLOR_MUTED);
 
   /* Coffee / Temperature section */

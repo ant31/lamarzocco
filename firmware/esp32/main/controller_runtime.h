@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "brew_counter.h"
 #include "brew_timer.h"
 #include "controller_heat_session.h"
 #include "controller_shot_timer.h"
@@ -71,6 +72,7 @@ typedef struct {
   uint8_t select_field_index;
 
   lm_ctrl_brew_timer_t brew_timer;
+  lm_ctrl_brew_counter_t brew_counter;
 } lm_ctrl_runtime_t;
 
 void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime);

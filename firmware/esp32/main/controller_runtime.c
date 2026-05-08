@@ -792,6 +792,8 @@ void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime) {
   reset_heat_state(&runtime->heat_state);
   reset_shot_timer_state(&runtime->shot_timer_state);
   brew_timer_init(&runtime->brew_timer);
+  brew_counter_init(&runtime->brew_counter);
+  brew_counter_load(&runtime->brew_counter);
   ctrl_state_init(&runtime->state);
   if (ctrl_state_load(&runtime->state) != ESP_OK) {
     ESP_LOGW(TAG, "Falling back to default controller values");
@@ -1272,9 +1274,12 @@ void lm_ctrl_runtime_tick(lm_ctrl_runtime_t *runtime, bool *needs_render) {
     }
   }
 
-  /* Tick the brew timer every 100 ms.
-   * brewing_active is wired to false until machine_link exposes it. */
-  brew_timer_tick(&runtime->brew_timer, false);
+  {
+    lm_ctrl_machine_link_info_t machine_info_tick = {0};
+    lm_ctrl_machine_link_get_info(&machine_info_tick);
+    brew_timer_tick(&runtime->brew_timer, machine_info_tick.brewing_active);
+    brew_counter_update(&runtime->brew_counter, machine_info_tick.brewing_active);
+  }
   if (runtime->state.screen == CTRL_SCREEN_BREW_TIMER && needs_render != NULL) {
     *needs_render = true;
   }
@@ -1352,6 +1357,7 @@ void lm_ctrl_runtime_build_ui_view(const lm_ctrl_runtime_t *runtime, lm_ctrl_ui_
              "%d.%d", whole, tenth);
     view->brew_timer_running = runtime->brew_timer.running;
   }
+  view->daily_brew_count = brew_counter_get(&runtime->brew_counter);
   view->backflush_visible = runtime->backflush_open;
   view->pending_edit = runtime->pending_edit;
   view->pending_edit_focus = runtime->pending_edit_focus;

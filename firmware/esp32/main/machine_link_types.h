@@ -87,6 +87,7 @@ typedef struct {
   uint32_t loaded_mask;
   uint32_t feature_mask;
   lm_ctrl_machine_water_status_t water_status;
+  bool brewing_active; /**< true while the machine is actively pulling a shot */
 } lm_ctrl_machine_link_info_t;
 
 #ifdef __cplusplus
