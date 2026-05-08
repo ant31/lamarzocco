@@ -820,10 +820,6 @@ void lm_ctrl_runtime_bootstrap(lm_ctrl_runtime_t *runtime) {
   runtime->last_power_status_version = lm_ctrl_power_status_version();
   runtime->last_machine_status_version = lm_ctrl_machine_link_status_version();
   runtime->last_preset_version = ctrl_state_preset_version();
-  brew_timer_tick(&runtime->brew_timer, false /* brewing_active: wire when machine link exposes it */);
-  if (runtime->state.screen == CTRL_SCREEN_BREW_TIMER && needs_render != NULL) {
-    *needs_render = true; /* always refresh when brew timer is visible */
-  }
   maybe_request_cloud_probe(&runtime->last_cloud_probe_request_us);
   maybe_request_value_sync(&runtime->state);
   maybe_request_periodic_value_refresh(&runtime->last_ble_refresh_request_us, &runtime->last_cloud_refresh_request_us);
