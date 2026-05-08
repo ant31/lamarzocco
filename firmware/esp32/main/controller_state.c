@@ -14,6 +14,7 @@
 
 #include "esp_log.h"
 #include "nvs.h"
+#include "lm_ctrl_nvs_keys.h"
 
 static const char *TAG = "ctrl_state";
 static const char *CTRL_STATE_NAMESPACE = "ctrl_state";
@@ -734,8 +735,10 @@ void ctrl_state_init(ctrl_state_t *state) {
   state->values.bbw_dose_2_g = 34.0f;
   state->loaded_mask = 0;
   state->feature_mask = 0;
-  state->focus = CTRL_FOCUS_TEMPERATURE;
+  state->focus = CTRL_FOCUS_DASHBOARD;
   state->screen = CTRL_SCREEN_MAIN;
+  state->dashboard_selection = 0;
+  state->backlight_level = 4;
   state->preset_count = CTRL_PRESET_DEFAULT_COUNT;
   state->preset_index = 0;
   state->temperature_step_c = CTRL_TEMPERATURE_STEP_DEFAULT_C;
@@ -830,6 +833,7 @@ esp_err_t ctrl_state_load(ctrl_state_t *state) {
     }
   }
 
+  ctrl_state_load_ui_prefs(state);
   return (ret == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : ret;
 }
 
@@ -979,6 +983,11 @@ void ctrl_set_focus(ctrl_state_t *state, ctrl_focus_t focus) {
 
   state->focus = focus;
   state->screen = CTRL_SCREEN_MAIN;
+
+  /* Dashboard keeps its own selection; other pages reset it. */
+  if (focus != CTRL_FOCUS_DASHBOARD) {
+    state->dashboard_selection = 0;
+  }
 }
 
 void ctrl_toggle_focus(ctrl_state_t *state, ctrl_focus_t focus) {
@@ -1257,6 +1266,8 @@ const char *ctrl_focus_name_for_language(ctrl_focus_t focus, ctrl_language_t lan
       return ctrl_text(CTRL_TEXT_FOCUS_BBW_DOSE_1, language);
     case CTRL_FOCUS_BBW_DOSE_2:
       return ctrl_text(CTRL_TEXT_FOCUS_BBW_DOSE_2, language);
+    case CTRL_FOCUS_DASHBOARD:
+      return "Dashboard";
     default:
       return "Unknown";
   }
@@ -1276,6 +1287,8 @@ const char *ctrl_focus_page_title(ctrl_focus_t focus, ctrl_language_t language) 
     case CTRL_FOCUS_BBW_DOSE_1:
     case CTRL_FOCUS_BBW_DOSE_2:
       return ctrl_focus_name_for_language(focus, language);
+    case CTRL_FOCUS_DASHBOARD:
+      return "Dashboard";
     default:
       return ctrl_text(CTRL_TEXT_SETTING, language);
   }
@@ -1327,6 +1340,38 @@ ctrl_bbw_mode_t ctrl_bbw_mode_from_cloud_code(const char *code) {
     return CTRL_BBW_MODE_CONTINUOUS;
   }
   return CTRL_BBW_MODE_DOSE_1;
+}
+
+void ctrl_state_save_ui_prefs(uint8_t theme_index, uint8_t backlight_level) {
+  nvs_handle_t handle;
+
+  if (nvs_open(LM_CTRL_PREF_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    return;
+  }
+  nvs_set_u8(handle, LM_CTRL_PREF_KEY_UI_THEME, theme_index);
+  nvs_set_u8(handle, LM_CTRL_PREF_KEY_BACKLIGHT, backlight_level);
+  nvs_commit(handle);
+  nvs_close(handle);
+}
+
+void ctrl_state_load_ui_prefs(ctrl_state_t *state) {
+  nvs_handle_t handle;
+  uint8_t val;
+
+  if (state == NULL) {
+    return;
+  }
+
+  if (nvs_open(LM_CTRL_PREF_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+    return;
+  }
+  if (nvs_get_u8(handle, LM_CTRL_PREF_KEY_UI_THEME, &val) == ESP_OK) {
+    state->theme_index = val < 5 ? val : 0;
+  }
+  if (nvs_get_u8(handle, LM_CTRL_PREF_KEY_BACKLIGHT, &val) == ESP_OK) {
+    state->backlight_level = val < 5 ? val : 4;
+  }
+  nvs_close(handle);
 }
 
 const char *ctrl_screen_name(ctrl_screen_t screen) {

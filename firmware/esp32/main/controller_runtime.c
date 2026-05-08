@@ -188,27 +188,15 @@ static bool approx_equal(float a, float b) {
 }
 
 static bool is_dashboard_focus(ctrl_focus_t focus) {
-  return focus == CTRL_FOCUS_TEMPERATURE ||
-         focus == CTRL_FOCUS_INFUSE ||
-         focus == CTRL_FOCUS_PAUSE;
+  return focus == CTRL_FOCUS_DASHBOARD;
 }
 
-/* Cycle through the three dashboard editable fields. */
-static ctrl_focus_t cycle_dashboard_focus(ctrl_focus_t current, int delta) {
-  static const ctrl_focus_t k_dash_focuses[3] = {
+/* Map dashboard_selection index to the actual machine field focus. */
+static ctrl_focus_t dashboard_selection_to_focus(uint8_t selection) {
+  static const ctrl_focus_t k_map[3] = {
     CTRL_FOCUS_TEMPERATURE, CTRL_FOCUS_INFUSE, CTRL_FOCUS_PAUSE,
   };
-  int idx = 0;
-  int i;
-
-  for (i = 0; i < 3; i++) {
-    if (k_dash_focuses[i] == current) {
-      idx = i;
-      break;
-    }
-  }
-  idx = ((idx + (delta > 0 ? 1 : -1)) % 3 + 3) % 3;
-  return k_dash_focuses[idx];
+  return k_map[selection < 3 ? selection : 0];
 }
 
 static bool should_defer_machine_send(uint32_t field_mask) {
@@ -847,11 +835,31 @@ void lm_ctrl_runtime_handle_input_event(
 
   switch (event->type) {
     case LM_CTRL_EVENT_ROTATE:
-      /* Dashboard navigation mode: when not editing, rotate cycles widget focus */
+      /* Dashboard navigation: cycle which widget is selected */
       if (runtime->state.screen == CTRL_SCREEN_MAIN &&
           !runtime->pending_edit &&
           is_dashboard_focus(runtime->state.focus)) {
-        ctrl_set_focus(&runtime->state, cycle_dashboard_focus(runtime->state.focus, event->delta_steps));
+        const int new_sel = (((int)runtime->state.dashboard_selection) +
+                              (event->delta_steps > 0 ? 1 : -1) + 3) % 3;
+        runtime->state.dashboard_selection = (uint8_t)new_sel;
+        (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
+        (void)lm_ctrl_haptic_click();
+        break;
+      }
+      /* Dashboard edit mode: rotate the field currently being edited */
+      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
+          runtime->pending_edit &&
+          is_dashboard_focus(runtime->state.focus)) {
+        const ctrl_focus_t edit_focus = runtime->pending_edit_focus;
+        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(edit_focus);
+        /* Temporarily swap focus so ctrl_rotate operates on the right field */
+        runtime->state.focus = edit_focus;
+        ctrl_rotate(&runtime->state, event->delta_steps);
+        runtime->state.focus = CTRL_FOCUS_DASHBOARD;
+        if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+          note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
+          runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+        }
         (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
         (void)lm_ctrl_haptic_click();
         break;
@@ -911,8 +919,39 @@ void lm_ctrl_runtime_handle_input_event(
       }
       break;
     case LM_CTRL_EVENT_TOGGLE_FOCUS: {
-      /* On the main screen use the currently focused field rather than the
-       * event->focus (which the button always sends as TEMPERATURE). */
+      /* On the dashboard, button press edits the currently selected dashboard widget. */
+      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
+          is_dashboard_focus(runtime->state.focus)) {
+        const ctrl_focus_t dash_field = dashboard_selection_to_focus(runtime->state.dashboard_selection);
+
+        if (!lm_ctrl_controller_field_is_editable(access.editable_mask, dash_field)) {
+          break;
+        }
+        if (runtime->pending_edit && runtime->pending_edit_focus == dash_field) {
+          confirm_pending_edit(runtime);
+          (void)lm_ctrl_haptic_click();
+          break;
+        }
+        if (runtime->pending_edit) {
+          confirm_pending_edit(runtime);
+        }
+        runtime->pre_edit_values = runtime->state.values;
+        /* Keep focus on CTRL_FOCUS_DASHBOARD — only pending_edit_focus changes */
+        runtime->pending_edit_focus = dash_field;
+        runtime->pending_edit = true;
+        runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+        {
+          const uint32_t fm = lm_ctrl_machine_field_for_focus(dash_field);
+          if (fm != LM_CTRL_MACHINE_FIELD_NONE) {
+            note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, fm);
+          }
+        }
+        ESP_LOGI(TAG, "Dashboard edit start sel=%u field=%s",
+                 (unsigned)runtime->state.dashboard_selection, ctrl_focus_name(dash_field));
+        (void)lm_ctrl_haptic_click();
+        break;
+      }
+      /* On other main-screen pages use the current focus. */
       const ctrl_focus_t eff_focus = (runtime->state.screen == CTRL_SCREEN_MAIN)
         ? runtime->state.focus
         : event->focus;

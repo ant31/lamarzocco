@@ -8,7 +8,7 @@
 
 /** Maximum number of horizontally swipeable main pages in the round UI.
  *  The last slot is always the Backflush page. */
-#define LM_CTRL_UI_MAIN_PAGE_COUNT 9
+#define LM_CTRL_UI_MAIN_PAGE_COUNT 10
 /** Maximum number of touch bindings stored for button-like actions. */
 #define LM_CTRL_UI_BINDING_COUNT 15
 /** Maximum setup status text length passed into the UI view model. */
@@ -145,11 +145,11 @@ struct lm_ctrl_ui_s {
   lv_obj_t *backflush_start_button;
   lv_obj_t *backflush_start_label;
 
-  /* Dashboard panels (shown when focus is TEMPERATURE / INFUSE / PAUSE) */
+  /* Dashboard panels (shown when focus is CTRL_FOCUS_DASHBOARD) */
   lv_obj_t *dash_clock_panel;
   lv_obj_t *dash_clock_hhmm;
-  lv_obj_t *dash_clock_ss;
   lv_obj_t *dash_clock_no_sync;
+  lv_obj_t *dash_brew_count;
   lv_obj_t *dash_temp_panel;
   lv_obj_t *dash_temp_title;
   lv_obj_t *dash_temp_value;

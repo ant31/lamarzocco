@@ -1,6 +1,8 @@
 [ ] Long press display timer and it starts quick pooling to display timer and weight (if available) as soon as the machine start brewing.
     It must get the brewing time as accurate as possible. Add manuall start /stop button too
     The timer must show the number in big to the decimal
+[ ] Wire brew_counter_update() to a real brewing_active signal once machine link exposes it.
+    Infrastructure is in place (brew_counter.h/c, NVS keys, dashboard badge slot).
 [x] In the connect qr code page, add a 'connect' that will try to connect to the existing machine (the same thing that it does at the startup)
     NOTE: "Connect" button added to the QR/setup screen. Dispatches CONNECT_MACHINE event
     which calls lm_ctrl_machine_link_request_sync_mode(ALL). Hidden during reset flows.
@@ -13,7 +15,9 @@ like clock half left, brewing temp top right, pre-brew bottom right.
     NOTE: Dashboard renders on CTRL_SCREEN_MAIN when focus is TEMP/INFUSE/PAUSE.
     Encoder rotates between panels (nav mode), press activates edit, press again confirms.
     Timeout reverts unconfirmed edits. Swipe to STEAM/STANDBY/BBW single-value pages.
-[ ] Add a counter of number of coffee brewed in the day. A coffee brewed is brewing for more than 10s. 
+[x] Add a counter of number of coffee brewed in the day. A coffee brewed is brewing for more than 10s.
+    NOTE: brew_counter module created (brew_counter.h/c). Persists count + date_yday to NVS.
+    Dashboard shows ☕ N badge. Wiring to real brewing signal is a follow-up task.
 [x] when sliding before the QR code, it show a settings page, where you can change the color them (let user rotate theme) a them is combinaison of background/forground colors
     can change the luminosity of the device. Add a reset default button.
     NOTE: settings/backflush are now proper first-class screens (not overlays) so theme/bg applies correctly.

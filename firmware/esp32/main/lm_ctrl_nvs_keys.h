@@ -33,6 +33,11 @@ extern "C" {
 #define LM_CTRL_PREF_KEY_UI_THEME "ui_theme"
 #define LM_CTRL_PREF_KEY_BACKLIGHT "backlight_lvl"
 
+/* Daily brew counter */
+#define LM_CTRL_BREW_COUNTER_NAMESPACE "brew_cnt"
+#define LM_CTRL_BREW_COUNTER_KEY_COUNT "count"
+#define LM_CTRL_BREW_COUNTER_KEY_DATE  "date_yday"
+
 #ifdef __cplusplus
 }
 #endif

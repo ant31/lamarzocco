@@ -33,6 +33,7 @@ typedef enum {
   CTRL_FOCUS_BBW_MODE,
   CTRL_FOCUS_BBW_DOSE_1,
   CTRL_FOCUS_BBW_DOSE_2,
+  CTRL_FOCUS_DASHBOARD,
   CTRL_FOCUS_COUNT,
 } ctrl_focus_t;
 
@@ -162,6 +163,7 @@ typedef struct {
   ctrl_recovery_action_t recovery_action;
   uint8_t theme_index;
   uint8_t backlight_level;
+  uint8_t dashboard_selection; /**< 0=temp, 1=infuse, 2=pause — highlighted on dashboard */
 } ctrl_state_t;
 
 /** Actions emitted by the state machine for status text and side effects. */
@@ -256,6 +258,10 @@ const char *ctrl_steam_level_label(ctrl_steam_level_t level);
 const char *ctrl_bbw_mode_cloud_code(ctrl_bbw_mode_t mode);
 /** Parse a La Marzocco cloud code into a controller brew by weight mode. */
 ctrl_bbw_mode_t ctrl_bbw_mode_from_cloud_code(const char *code);
+/** Persist UI preferences (theme, backlight) to the ui_pref NVS namespace. */
+void ctrl_state_save_ui_prefs(uint8_t theme_index, uint8_t backlight_level);
+/** Load UI preferences from the ui_pref NVS namespace into state. */
+void ctrl_state_load_ui_prefs(ctrl_state_t *state);
 /** Human-readable name for a screen. */
 const char *ctrl_screen_name(ctrl_screen_t screen);
 /** Default fallback name for a preset slot. */
