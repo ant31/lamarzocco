@@ -1794,12 +1794,14 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_add_event_cb(ui->screen, handle_touch_down, LV_EVENT_PRESSED, ui);
   lv_obj_add_event_cb(ui->screen, handle_touch_up, LV_EVENT_RELEASED, ui);
 
-  /* Raise long-press threshold to 3 s so accidental holds don't trigger it */
+  /* Raise long-press threshold to 3 s so accidental holds don't trigger it.
+   * In LVGL 8 the long_press_time lives on the indev driver struct directly. */
   {
     lv_indev_t *indev = lv_indev_get_next(NULL);
     while (indev != NULL) {
-      if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-        lv_indev_set_long_press_time(indev, 3000);
+      if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER &&
+          indev->driver != NULL) {
+        indev->driver->long_press_time = 3000;
       }
       indev = lv_indev_get_next(indev);
     }
