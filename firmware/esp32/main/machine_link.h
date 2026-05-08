@@ -66,6 +66,8 @@ void lm_ctrl_machine_link_get_info(lm_ctrl_machine_link_info_t *info);
 uint32_t lm_ctrl_machine_link_status_version(void);
 /** Send a backflush cleaning start command to the machine via cloud. */
 esp_err_t lm_ctrl_machine_link_start_backflush(void);
+/** Update the live brewing-active flag (called by the cloud live-update layer). */
+void lm_ctrl_machine_link_set_brewing_active(bool active);
 
 #ifdef __cplusplus
 }

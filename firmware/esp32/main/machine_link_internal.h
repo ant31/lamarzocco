@@ -104,6 +104,7 @@ typedef struct {
   bool cloud_live_updates_active;
   bool cloud_live_updates_connected;
   bool local_heat_hint_active;
+  bool brewing_active;
   uint32_t sync_request_flags;
   int64_t last_ble_failure_us;
   int64_t local_heat_hint_until_us;

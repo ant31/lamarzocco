@@ -95,6 +95,7 @@ static void set_cloud_websocket_connected(bool transport_connected, bool stomp_c
 }
 
 static void set_brew_timer_state(bool brew_active, int64_t brew_start_epoch_ms) {
+  lm_ctrl_machine_link_set_brewing_active(brew_active);
   const int64_t now_us = esp_timer_get_time();
   const int64_t now_epoch_ms = current_cloud_epoch_ms();
   bool changed = false;
