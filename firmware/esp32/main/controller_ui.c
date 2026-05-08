@@ -64,6 +64,7 @@ enum {
   BIND_SETTINGS_BL_DOWN,
   BIND_SETTINGS_BL_UP,
   BIND_SETTINGS_RESET,
+  BIND_SETUP_CONNECT,
 };
 
 static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
@@ -77,11 +78,29 @@ static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
 /* Number of real focus-based pages (excludes the backflush page slot). */
 #define MAIN_FOCUS_PAGE_COUNT (LM_CTRL_UI_MAIN_PAGE_COUNT - 1)
 
+/* Returns true if this focus is one of the three dashboard panels.
+ * They all share a single page slot in the dot indicator. */
+static bool is_dashboard_page_focus(ctrl_focus_t focus) {
+  return focus == CTRL_FOCUS_TEMPERATURE ||
+         focus == CTRL_FOCUS_INFUSE ||
+         focus == CTRL_FOCUS_PAUSE;
+}
+
 static size_t main_page_count(uint32_t feature_mask) {
   size_t count = 0;
+  bool dashboard_counted = false;
 
   for (size_t i = 0; i < MAIN_FOCUS_PAGE_COUNT; ++i) {
-    if (focus_supported(feature_mask, MAIN_PAGE_ORDER[i])) {
+    if (!focus_supported(feature_mask, MAIN_PAGE_ORDER[i])) {
+      continue;
+    }
+    if (is_dashboard_page_focus(MAIN_PAGE_ORDER[i])) {
+      if (!dashboard_counted) {
+        count++;
+        dashboard_counted = true;
+      }
+      /* Skip remaining dashboard focuses — they share one dot */
+    } else {
       count++;
     }
   }
@@ -92,15 +111,27 @@ static size_t main_page_count(uint32_t feature_mask) {
 
 static int main_page_index(uint32_t feature_mask, ctrl_focus_t focus) {
   int page_index = 0;
+  bool dashboard_counted = false;
 
   for (size_t i = 0; i < MAIN_FOCUS_PAGE_COUNT; ++i) {
     if (!focus_supported(feature_mask, MAIN_PAGE_ORDER[i])) {
       continue;
     }
-    if (MAIN_PAGE_ORDER[i] == focus) {
-      return page_index;
+    if (is_dashboard_page_focus(MAIN_PAGE_ORDER[i])) {
+      if (!dashboard_counted) {
+        /* All three dashboard focuses map to page 0 */
+        if (is_dashboard_page_focus(focus)) {
+          return page_index;
+        }
+        page_index++;
+        dashboard_counted = true;
+      }
+    } else {
+      if (MAIN_PAGE_ORDER[i] == focus) {
+        return page_index;
+      }
+      page_index++;
     }
-    page_index++;
   }
 
   return 0;
@@ -115,6 +146,7 @@ static ctrl_focus_t focus_from_page_index(uint32_t feature_mask, int index) {
   const size_t count = main_page_count(feature_mask);
   int wrapped;
   int page_index = 0;
+  bool dashboard_counted = false;
 
   if (count == 0) {
     return CTRL_FOCUS_TEMPERATURE;
@@ -125,14 +157,24 @@ static ctrl_focus_t focus_from_page_index(uint32_t feature_mask, int index) {
     wrapped += (int)count;
   }
 
-  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+  for (size_t i = 0; i < MAIN_FOCUS_PAGE_COUNT; ++i) {
     if (!focus_supported(feature_mask, MAIN_PAGE_ORDER[i])) {
       continue;
     }
-    if (page_index == wrapped) {
-      return MAIN_PAGE_ORDER[i];
+    if (is_dashboard_page_focus(MAIN_PAGE_ORDER[i])) {
+      if (!dashboard_counted) {
+        if (page_index == wrapped) {
+          return CTRL_FOCUS_TEMPERATURE; /* dashboard page always lands on temperature */
+        }
+        page_index++;
+        dashboard_counted = true;
+      }
+    } else {
+      if (page_index == wrapped) {
+        return MAIN_PAGE_ORDER[i];
+      }
+      page_index++;
     }
-    page_index++;
   }
 
   return CTRL_FOCUS_TEMPERATURE;
@@ -1084,12 +1126,6 @@ static void handle_settings_reset(lv_event_t *event) {
   render_settings_screen(ui);
 }
 
-static bool is_dashboard_focus(ctrl_focus_t focus) {
-  return focus == CTRL_FOCUS_TEMPERATURE ||
-         focus == CTRL_FOCUS_INFUSE ||
-         focus == CTRL_FOCUS_PAUSE;
-}
-
 /* Border styling for a dashboard panel based on focus and edit state. */
 static void style_dash_panel(
   lv_obj_t *panel,
@@ -1229,7 +1265,7 @@ static void render_main_screen(
   const bool standby_pending = view != NULL && view->pending_edit && view->pending_edit_focus == CTRL_FOCUS_STANDBY;
 
   /* Dashboard layout for the 3 primary editable fields */
-  if (is_dashboard_focus(state->focus)) {
+  if (is_dashboard_page_focus(state->focus)) {
     set_hidden(ui->dash_clock_panel, false);
     set_hidden(ui->dash_temp_panel, false);
     set_hidden(ui->dash_prebrew_panel, false);
@@ -1561,8 +1597,10 @@ static void render_setup_screen(lm_ctrl_ui_t *ui, const ctrl_state_t *state, con
   set_hidden(ui->setup_secondary_button, state->screen != CTRL_SCREEN_SETUP_RESET_CONFIRM);
   set_hidden(ui->setup_primary_button, state->screen != CTRL_SCREEN_SETUP_RESET_CONFIRM);
   set_hidden(ui->setup_action_list, state->screen != CTRL_SCREEN_SETUP_RESET_CONFIRM);
+  set_hidden(ui->setup_connect_button, is_setup_reset_screen(state->screen));
 
   if (state->screen == CTRL_SCREEN_SETUP_RESET_ARM) {
+    set_hidden(ui->setup_connect_button, true);
     lv_obj_align(ui->setup_title, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_align(ui->setup_body, LV_ALIGN_BOTTOM_MID, 0, -6);
     set_label_text(ui->setup_title, ctrl_text(CTRL_TEXT_RESET, language), COLOR_ACTIVE);
@@ -1581,6 +1619,7 @@ static void render_setup_screen(lm_ctrl_ui_t *ui, const ctrl_state_t *state, con
   }
 
   if (state->screen == CTRL_SCREEN_SETUP_RESET_CONFIRM) {
+    set_hidden(ui->setup_connect_button, true);
     lv_obj_align(ui->setup_title, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_align(ui->setup_body, LV_ALIGN_TOP_MID, 0, 64);
     lv_obj_align(ui->setup_action_list, LV_ALIGN_TOP_MID, 0, 102);
@@ -1877,12 +1916,21 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_radius(ui->setup_qr, 12, 0);
   lv_obj_add_event_cb(ui->setup_qr, handle_setup_long_press, LV_EVENT_LONG_PRESSED, ui);
 
+  ui->setup_connect_button = create_button(ui->setup_card, 100, 36, 0, -8, &ui->setup_connect_label);
+  lv_obj_align_to(ui->setup_connect_button, ui->setup_qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+  lv_obj_set_style_bg_color(ui->setup_connect_button, COLOR_BUTTON, 0);
+  lv_obj_set_style_shadow_width(ui->setup_connect_button, 0, 0);
+  lv_obj_set_style_border_width(ui->setup_connect_button, 1, 0);
+  lv_obj_set_style_border_color(ui->setup_connect_button, COLOR_RING, 0);
+  set_label_text(ui->setup_connect_label, "Connect", COLOR_ACTIVE);
+  bind_button(ui, BIND_SETUP_CONNECT, ui->setup_connect_button, LM_CTRL_UI_ACTION_CONNECT_MACHINE, CTRL_FOCUS_TEMPERATURE);
+
   ui->setup_body = lv_label_create(ui->setup_card);
   lv_obj_set_width(ui->setup_body, 236);
   lv_label_set_long_mode(ui->setup_body, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(ui->setup_body, UI_FONT_14, 0);
   lv_obj_set_style_text_align(ui->setup_body, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align_to(ui->setup_body, ui->setup_qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+  lv_obj_align_to(ui->setup_body, ui->setup_connect_button, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
   lv_obj_add_event_cb(ui->setup_body, handle_setup_long_press, LV_EVENT_LONG_PRESSED, ui);
 
   ui->setup_action_list = lv_label_create(ui->setup_card);

@@ -1025,6 +1025,15 @@ void lm_ctrl_runtime_handle_input_event(
       runtime->state.screen = CTRL_SCREEN_SETTINGS;
       (void)lm_ctrl_haptic_click();
       break;
+    case LM_CTRL_EVENT_CONNECT_MACHINE:
+      if (lm_ctrl_machine_link_request_sync_mode(LM_CTRL_MACHINE_SYNC_ALL) == ESP_OK) {
+        snprintf(runtime->status, sizeof(runtime->status), "Connecting to machine...");
+      } else {
+        snprintf(runtime->status, sizeof(runtime->status), "No machine selected yet.");
+      }
+      preserve_status = true;
+      (void)lm_ctrl_haptic_click();
+      break;
     case LM_CTRL_EVENT_OPEN_BACKFLUSH:
       runtime->backflush_open = true;
       (void)lm_ctrl_haptic_click();

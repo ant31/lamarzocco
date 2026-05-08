@@ -94,6 +94,9 @@ static void ui_action_cb(lm_ctrl_ui_action_t action, ctrl_focus_t focus, void *u
     case LM_CTRL_UI_ACTION_OPEN_SETTINGS:
       event_type = LM_CTRL_EVENT_OPEN_SETTINGS;
       break;
+    case LM_CTRL_UI_ACTION_CONNECT_MACHINE:
+      event_type = LM_CTRL_EVENT_CONNECT_MACHINE;
+      break;
     default:
       return;
   }

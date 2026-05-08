@@ -10,7 +10,7 @@
  *  The last slot is always the Backflush page. */
 #define LM_CTRL_UI_MAIN_PAGE_COUNT 9
 /** Maximum number of touch bindings stored for button-like actions. */
-#define LM_CTRL_UI_BINDING_COUNT 14
+#define LM_CTRL_UI_BINDING_COUNT 15
 /** Maximum setup status text length passed into the UI view model. */
 #define LM_CTRL_UI_STATUS_TEXT_LEN 256
 /** Maximum setup QR payload length passed into the UI view model. */
@@ -63,6 +63,7 @@ typedef enum {
   LM_CTRL_UI_ACTION_START_BACKFLUSH,
   LM_CTRL_UI_ACTION_CONFIRM_VALUE,
   LM_CTRL_UI_ACTION_OPEN_SETTINGS,
+  LM_CTRL_UI_ACTION_CONNECT_MACHINE,
 } lm_ctrl_ui_action_t;
 
 /** Callback invoked when the UI needs the main loop to handle a touch action. */
@@ -124,6 +125,8 @@ struct lm_ctrl_ui_s {
   lv_obj_t *setup_body;
   lv_obj_t *setup_action_list;
   lv_obj_t *setup_reset_arc;
+  lv_obj_t *setup_connect_button;
+  lv_obj_t *setup_connect_label;
   lv_obj_t *setup_secondary_button;
   lv_obj_t *setup_secondary_label;
   lv_obj_t *setup_primary_button;
