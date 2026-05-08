@@ -15,6 +15,7 @@
 #include "lm_ctrl_fonts.h"
 #include "board_config.h"
 #include "board_backlight.h"
+#include "dashboard_clock.h"
 #include "machine_link_types.h"
 #include "ui_theme.h"
 
@@ -791,6 +792,9 @@ static void render_backflush_screen(
   if (ui == NULL) {
     return;
   }
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
@@ -995,6 +999,9 @@ static void render_settings_screen(lm_ctrl_ui_t *ui) {
 
   const lm_ctrl_ui_theme_t *theme = ui_theme_get(ui->settings_theme_index);
 
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
@@ -1077,6 +1084,133 @@ static void handle_settings_reset(lv_event_t *event) {
   render_settings_screen(ui);
 }
 
+static bool is_dashboard_focus(ctrl_focus_t focus) {
+  return focus == CTRL_FOCUS_TEMPERATURE ||
+         focus == CTRL_FOCUS_INFUSE ||
+         focus == CTRL_FOCUS_PAUSE;
+}
+
+/* Border styling for a dashboard panel based on focus and edit state. */
+static void style_dash_panel(
+  lv_obj_t *panel,
+  bool focused,
+  bool editing
+) {
+  if (panel == NULL) {
+    return;
+  }
+
+  if (editing) {
+    lv_obj_set_style_border_width(panel, 2, 0);
+    lv_obj_set_style_border_color(panel, COLOR_ACTIVE, 0);
+  } else if (focused) {
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_border_color(panel, COLOR_RING, 0);
+  } else {
+    lv_obj_set_style_border_width(panel, 0, 0);
+  }
+}
+
+static void render_dashboard_screen(
+  lm_ctrl_ui_t *ui,
+  const ctrl_state_t *state,
+  const lm_ctrl_ui_view_t *view
+) {
+  char buf[24];
+  lm_ctrl_clock_t clock = {0};
+  const bool temp_focused   = state->focus == CTRL_FOCUS_TEMPERATURE;
+  const bool infuse_focused = state->focus == CTRL_FOCUS_INFUSE;
+  const bool pause_focused  = state->focus == CTRL_FOCUS_PAUSE;
+  const bool pending        = view != NULL && view->pending_edit;
+  const bool temp_editing   = pending && view->pending_edit_focus == CTRL_FOCUS_TEMPERATURE;
+  const bool infuse_editing = pending && view->pending_edit_focus == CTRL_FOCUS_INFUSE;
+  const bool pause_editing  = pending && view->pending_edit_focus == CTRL_FOCUS_PAUSE;
+
+  set_hidden(ui->main_card, true);
+  set_hidden(ui->presets_card, true);
+  set_hidden(ui->setup_card, true);
+  set_hidden(ui->shot_timer_card, true);
+  set_hidden(ui->backflush_card, true);
+  set_hidden(ui->setup_reset_arc, true);
+  set_hidden(ui->heat_arc, view == NULL ? true : !view->heat_arc_visible);
+  set_hidden(ui->page_label, true);
+  set_hidden(ui->setup_secondary_button, true);
+  set_hidden(ui->setup_primary_button, true);
+  set_hidden(ui->power_left_button, true);
+  set_hidden(ui->power_right_button, true);
+  set_hidden(ui->power_hint, true);
+  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+    set_hidden(ui->page_dots[i], true);
+  }
+
+  set_hidden(ui->dash_clock_panel, false);
+  set_hidden(ui->dash_temp_panel, false);
+  set_hidden(ui->dash_prebrew_panel, false);
+
+  /* Clock panel */
+  dashboard_clock_read(&clock);
+  if (clock.valid) {
+    snprintf(buf, sizeof(buf), "%02u:%02u", clock.hours, clock.minutes);
+    set_label_text(ui->dash_clock_hhmm, buf, COLOR_TEXT);
+    snprintf(buf, sizeof(buf), "%02u", clock.seconds);
+    set_label_text(ui->dash_clock_ss, buf, COLOR_MUTED);
+    set_hidden(ui->dash_clock_hhmm, false);
+    set_hidden(ui->dash_clock_ss, false);
+    set_hidden(ui->dash_clock_no_sync, true);
+  } else {
+    set_hidden(ui->dash_clock_hhmm, true);
+    set_hidden(ui->dash_clock_ss, true);
+    set_hidden(ui->dash_clock_no_sync, false);
+  }
+  style_dash_panel(ui->dash_clock_panel, false, false);
+
+  /* Temperature panel */
+  {
+    const lv_color_t val_color = temp_editing ? COLOR_ACTIVE : COLOR_TEXT;
+    const lv_color_t title_color = temp_focused ? COLOR_ACTIVE : COLOR_MUTED;
+    snprintf(buf, sizeof(buf), "%.1f°C", state->values.temperature_c);
+    set_label_text(ui->dash_temp_title, "Coffee", title_color);
+    set_label_text(ui->dash_temp_value, buf, val_color);
+    style_dash_panel(ui->dash_temp_panel, temp_focused, temp_editing);
+  }
+
+  /* Pre-brew panel */
+  {
+    const lv_color_t in_color  = infuse_editing ? COLOR_ACTIVE :
+                                  infuse_focused ? COLOR_TEXT   : COLOR_MUTED;
+    const lv_color_t out_color = pause_editing  ? COLOR_ACTIVE :
+                                  pause_focused  ? COLOR_TEXT   : COLOR_MUTED;
+    const lv_color_t panel_border_focus = (infuse_focused || pause_focused) ? COLOR_RING : COLOR_RING;
+    (void)panel_border_focus;
+
+    snprintf(buf, sizeof(buf), "%.1f s", state->values.infuse_s);
+    set_label_text(ui->dash_prebrew_in_label,  "IN",  infuse_focused ? COLOR_ACTIVE : COLOR_MUTED);
+    set_label_text(ui->dash_prebrew_in_value,  buf,   in_color);
+    snprintf(buf, sizeof(buf), "%.1f s", state->values.pause_s);
+    set_label_text(ui->dash_prebrew_out_label, "OUT", pause_focused  ? COLOR_ACTIVE : COLOR_MUTED);
+    set_label_text(ui->dash_prebrew_out_value, buf,   out_color);
+
+    const bool prebrew_focused = infuse_focused || pause_focused;
+    const bool prebrew_editing = infuse_editing || pause_editing;
+    style_dash_panel(ui->dash_prebrew_panel, prebrew_focused, prebrew_editing);
+  }
+
+  /* Hint on the bottom — guides the user when a pending edit is active */
+  if (pending && (temp_editing || infuse_editing || pause_editing)) {
+    set_hidden(ui->hint, false);
+    set_label_text(ui->hint, "Press to confirm or wait to revert", COLOR_MUTED);
+    lv_obj_align(ui->hint, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_obj_set_style_text_font(ui->hint, UI_FONT_14, 0);
+    lv_obj_set_style_text_align(ui->hint, LV_TEXT_ALIGN_CENTER, 0);
+  } else {
+    set_hidden(ui->hint, true);
+  }
+
+  if (view != NULL && view->heat_arc_visible) {
+    lv_arc_set_value(ui->heat_arc, view->heat_progress_permille);
+  }
+}
+
 static void render_main_screen(
   lm_ctrl_ui_t *ui,
   const ctrl_state_t *state,
@@ -1093,6 +1227,20 @@ static void render_main_screen(
   const size_t page_count = main_page_count(state->feature_mask);
   const bool steam_pending   = view != NULL && view->pending_edit && view->pending_edit_focus == CTRL_FOCUS_STEAM;
   const bool standby_pending = view != NULL && view->pending_edit && view->pending_edit_focus == CTRL_FOCUS_STANDBY;
+
+  /* Dashboard layout for the 3 primary editable fields */
+  if (is_dashboard_focus(state->focus)) {
+    set_hidden(ui->dash_clock_panel, false);
+    set_hidden(ui->dash_temp_panel, false);
+    set_hidden(ui->dash_prebrew_panel, false);
+    render_dashboard_screen(ui, state, view);
+    return;
+  }
+
+  /* Hide dashboard panels when on a non-dashboard focus page */
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
 
   set_hidden(ui->main_card, false);
   set_hidden(ui->presets_card, true);
@@ -1196,6 +1344,9 @@ static void render_shot_timer_screen(lm_ctrl_ui_t *ui, const lm_ctrl_ui_view_t *
     return;
   }
 
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, true);
@@ -1343,6 +1494,9 @@ static void render_presets_screen(
   const ctrl_preset_t *preset = &state->presets[state->preset_index];
   const bool preset_load_enabled = view == NULL || view->preset_load_enabled;
 
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, false);
   set_hidden(ui->setup_card, true);
@@ -1389,6 +1543,9 @@ static void render_setup_screen(lm_ctrl_ui_t *ui, const ctrl_state_t *state, con
   const int reset_progress = state != NULL ? (int)state->reset_progress : 0;
   const int reset_progress_pct = (reset_progress * 100) / 24;
 
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
   set_hidden(ui->setup_card, false);
@@ -1760,6 +1917,98 @@ esp_err_t lm_ctrl_ui_init(
   bind_button(ui, BIND_SETUP_RESET_CONFIRM, ui->setup_primary_button, LM_CTRL_UI_ACTION_CONFIRM_SETUP_RESET, CTRL_FOCUS_TEMPERATURE);
   set_hidden(ui->setup_secondary_button, true);
   set_hidden(ui->setup_primary_button, true);
+
+  /* Dashboard panels — clock (left), temperature (top-right), prebrew (bottom-right) */
+  /* Clock panel — left half */
+  ui->dash_clock_panel = lv_obj_create(ui->screen);
+  lv_obj_remove_style_all(ui->dash_clock_panel);
+  lv_obj_set_size(ui->dash_clock_panel, 182, 230);
+  lv_obj_align(ui->dash_clock_panel, LV_ALIGN_CENTER, -112, 10);
+  lv_obj_set_style_bg_opa(ui->dash_clock_panel, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui->dash_clock_panel, 0, 0);
+  lv_obj_set_style_radius(ui->dash_clock_panel, 12, 0);
+  lv_obj_set_style_pad_all(ui->dash_clock_panel, 4, 0);
+  lv_obj_set_style_shadow_width(ui->dash_clock_panel, 0, 0);
+  lv_obj_clear_flag(ui->dash_clock_panel, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(ui->dash_clock_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->dash_clock_hhmm = lv_label_create(ui->dash_clock_panel);
+  lv_obj_set_style_text_font(ui->dash_clock_hhmm, UI_FONT_40, 0);
+  lv_obj_set_style_text_align(ui->dash_clock_hhmm, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_clock_hhmm, 174);
+  lv_obj_align(ui->dash_clock_hhmm, LV_ALIGN_CENTER, 0, -20);
+
+  ui->dash_clock_ss = lv_label_create(ui->dash_clock_panel);
+  lv_obj_set_style_text_font(ui->dash_clock_ss, UI_FONT_28, 0);
+  lv_obj_set_style_text_align(ui->dash_clock_ss, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_clock_ss, 174);
+  lv_obj_align(ui->dash_clock_ss, LV_ALIGN_CENTER, 0, 28);
+
+  ui->dash_clock_no_sync = lv_label_create(ui->dash_clock_panel);
+  lv_obj_set_style_text_font(ui->dash_clock_no_sync, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->dash_clock_no_sync, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_clock_no_sync, 174);
+  lv_obj_align(ui->dash_clock_no_sync, LV_ALIGN_CENTER, 0, 0);
+  lv_label_set_text(ui->dash_clock_no_sync, "--:--");
+  lv_obj_set_style_text_color(ui->dash_clock_no_sync, COLOR_MUTED, 0);
+
+  /* Temperature panel — top-right */
+  ui->dash_temp_panel = lv_obj_create(ui->screen);
+  lv_obj_remove_style_all(ui->dash_temp_panel);
+  lv_obj_set_size(ui->dash_temp_panel, 180, 108);
+  lv_obj_align(ui->dash_temp_panel, LV_ALIGN_CENTER, 112, -62);
+  lv_obj_set_style_bg_opa(ui->dash_temp_panel, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui->dash_temp_panel, 0, 0);
+  lv_obj_set_style_radius(ui->dash_temp_panel, 12, 0);
+  lv_obj_set_style_pad_all(ui->dash_temp_panel, 4, 0);
+  lv_obj_set_style_shadow_width(ui->dash_temp_panel, 0, 0);
+  lv_obj_clear_flag(ui->dash_temp_panel, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(ui->dash_temp_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->dash_temp_title = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_temp_title, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->dash_temp_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_temp_title, 172);
+  lv_obj_align(ui->dash_temp_title, LV_ALIGN_TOP_MID, 0, 8);
+
+  ui->dash_temp_value = lv_label_create(ui->dash_temp_panel);
+  lv_obj_set_style_text_font(ui->dash_temp_value, UI_FONT_28, 0);
+  lv_obj_set_style_text_align(ui->dash_temp_value, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->dash_temp_value, 172);
+  lv_obj_align(ui->dash_temp_value, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+  /* Pre-brew panel — bottom-right */
+  ui->dash_prebrew_panel = lv_obj_create(ui->screen);
+  lv_obj_remove_style_all(ui->dash_prebrew_panel);
+  lv_obj_set_size(ui->dash_prebrew_panel, 180, 108);
+  lv_obj_align(ui->dash_prebrew_panel, LV_ALIGN_CENTER, 112, 62);
+  lv_obj_set_style_bg_opa(ui->dash_prebrew_panel, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui->dash_prebrew_panel, 0, 0);
+  lv_obj_set_style_radius(ui->dash_prebrew_panel, 12, 0);
+  lv_obj_set_style_pad_all(ui->dash_prebrew_panel, 4, 0);
+  lv_obj_set_style_shadow_width(ui->dash_prebrew_panel, 0, 0);
+  lv_obj_clear_flag(ui->dash_prebrew_panel, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(ui->dash_prebrew_panel, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+  ui->dash_prebrew_in_label = lv_label_create(ui->dash_prebrew_panel);
+  lv_obj_set_style_text_font(ui->dash_prebrew_in_label, UI_FONT_14, 0);
+  lv_obj_align(ui->dash_prebrew_in_label, LV_ALIGN_TOP_LEFT, 10, 10);
+
+  ui->dash_prebrew_in_value = lv_label_create(ui->dash_prebrew_panel);
+  lv_obj_set_style_text_font(ui->dash_prebrew_in_value, UI_FONT_20, 0);
+  lv_obj_align(ui->dash_prebrew_in_value, LV_ALIGN_TOP_RIGHT, -10, 6);
+
+  ui->dash_prebrew_out_label = lv_label_create(ui->dash_prebrew_panel);
+  lv_obj_set_style_text_font(ui->dash_prebrew_out_label, UI_FONT_14, 0);
+  lv_obj_align(ui->dash_prebrew_out_label, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+
+  ui->dash_prebrew_out_value = lv_label_create(ui->dash_prebrew_panel);
+  lv_obj_set_style_text_font(ui->dash_prebrew_out_value, UI_FONT_20, 0);
+  lv_obj_align(ui->dash_prebrew_out_value, LV_ALIGN_BOTTOM_RIGHT, -10, -6);
+
+  set_hidden(ui->dash_clock_panel, true);
+  set_hidden(ui->dash_temp_panel, true);
+  set_hidden(ui->dash_prebrew_panel, true);
 
   /* Settings screen card — transparent like all other screen panels */
   ui->settings_card = create_panel(ui->screen, 300, 280);

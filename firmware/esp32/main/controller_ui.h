@@ -142,6 +142,20 @@ struct lm_ctrl_ui_s {
   lv_obj_t *backflush_start_button;
   lv_obj_t *backflush_start_label;
 
+  /* Dashboard panels (shown when focus is TEMPERATURE / INFUSE / PAUSE) */
+  lv_obj_t *dash_clock_panel;
+  lv_obj_t *dash_clock_hhmm;
+  lv_obj_t *dash_clock_ss;
+  lv_obj_t *dash_clock_no_sync;
+  lv_obj_t *dash_temp_panel;
+  lv_obj_t *dash_temp_title;
+  lv_obj_t *dash_temp_value;
+  lv_obj_t *dash_prebrew_panel;
+  lv_obj_t *dash_prebrew_in_label;
+  lv_obj_t *dash_prebrew_in_value;
+  lv_obj_t *dash_prebrew_out_label;
+  lv_obj_t *dash_prebrew_out_value;
+
   /* Settings screen */
   lv_obj_t *settings_card;
   lv_obj_t *settings_title;

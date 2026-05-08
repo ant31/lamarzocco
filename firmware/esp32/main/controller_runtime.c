@@ -187,6 +187,30 @@ static bool approx_equal(float a, float b) {
   return delta < 0.05f;
 }
 
+static bool is_dashboard_focus(ctrl_focus_t focus) {
+  return focus == CTRL_FOCUS_TEMPERATURE ||
+         focus == CTRL_FOCUS_INFUSE ||
+         focus == CTRL_FOCUS_PAUSE;
+}
+
+/* Cycle through the three dashboard editable fields. */
+static ctrl_focus_t cycle_dashboard_focus(ctrl_focus_t current, int delta) {
+  static const ctrl_focus_t k_dash_focuses[3] = {
+    CTRL_FOCUS_TEMPERATURE, CTRL_FOCUS_INFUSE, CTRL_FOCUS_PAUSE,
+  };
+  int idx = 0;
+  int i;
+
+  for (i = 0; i < 3; i++) {
+    if (k_dash_focuses[i] == current) {
+      idx = i;
+      break;
+    }
+  }
+  idx = ((idx + (delta > 0 ? 1 : -1)) % 3 + 3) % 3;
+  return k_dash_focuses[idx];
+}
+
 static bool should_defer_machine_send(uint32_t field_mask) {
   const uint32_t deferred_mask =
     LM_CTRL_MACHINE_FIELD_TEMPERATURE |
@@ -823,6 +847,15 @@ void lm_ctrl_runtime_handle_input_event(
 
   switch (event->type) {
     case LM_CTRL_EVENT_ROTATE:
+      /* Dashboard navigation mode: when not editing, rotate cycles widget focus */
+      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
+          !runtime->pending_edit &&
+          is_dashboard_focus(runtime->state.focus)) {
+        ctrl_set_focus(&runtime->state, cycle_dashboard_focus(runtime->state.focus, event->delta_steps));
+        (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
+        (void)lm_ctrl_haptic_click();
+        break;
+      }
       if (runtime->state.screen == CTRL_SCREEN_MAIN &&
           !lm_ctrl_controller_field_is_editable(access.editable_mask, runtime->state.focus)) {
         break;
@@ -877,18 +910,24 @@ void lm_ctrl_runtime_handle_input_event(
         (void)lm_ctrl_haptic_click();
       }
       break;
-    case LM_CTRL_EVENT_TOGGLE_FOCUS:
+    case LM_CTRL_EVENT_TOGGLE_FOCUS: {
+      /* On the main screen use the currently focused field rather than the
+       * event->focus (which the button always sends as TEMPERATURE). */
+      const ctrl_focus_t eff_focus = (runtime->state.screen == CTRL_SCREEN_MAIN)
+        ? runtime->state.focus
+        : event->focus;
+
       if (runtime->state.screen == CTRL_SCREEN_MAIN &&
-          !lm_ctrl_controller_field_is_editable(access.editable_mask, event->focus)) {
+          !lm_ctrl_controller_field_is_editable(access.editable_mask, eff_focus)) {
         break;
       }
       /* If a pending edit exists on this same focus, confirm it */
-      if (runtime->pending_edit && runtime->pending_edit_focus == event->focus) {
+      if (runtime->pending_edit && runtime->pending_edit_focus == eff_focus) {
         const bool waking_from_standby =
-          event->focus == CTRL_FOCUS_STANDBY &&
+          eff_focus == CTRL_FOCUS_STANDBY &&
           runtime->state.values.standby_on == false;
         confirm_pending_edit(runtime);
-        if (event->focus == CTRL_FOCUS_STANDBY && runtime->state.values.standby_on) {
+        if (eff_focus == CTRL_FOCUS_STANDBY && runtime->state.values.standby_on) {
           reset_heat_state(&runtime->heat_state);
           clear_heat_refresh(&runtime->heat_refresh);
         } else if (waking_from_standby) {
@@ -904,20 +943,21 @@ void lm_ctrl_runtime_handle_input_event(
       }
       /* Snapshot pre-toggle state so revert can undo it */
       runtime->pre_edit_values = runtime->state.values;
-      ctrl_toggle_focus(&runtime->state, event->focus);
-      runtime->pending_edit_focus = event->focus;
+      ctrl_toggle_focus(&runtime->state, eff_focus);
+      runtime->pending_edit_focus = eff_focus;
       runtime->pending_edit = true;
       runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
       /* Hold the local value so cloud sync doesn't overwrite it during the window */
       {
-        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(event->focus);
+        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(eff_focus);
         if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
           note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
         }
       }
-      ESP_LOGI(TAG, "Toggle pending confirmation for focus=%s", ctrl_focus_name(event->focus));
+      ESP_LOGI(TAG, "Toggle pending confirmation for focus=%s", ctrl_focus_name(eff_focus));
       (void)lm_ctrl_haptic_click();
       break;
+    }
     case LM_CTRL_EVENT_OPEN_PRESETS:
       ctrl_open_presets(&runtime->state);
       (void)lm_ctrl_haptic_click();
