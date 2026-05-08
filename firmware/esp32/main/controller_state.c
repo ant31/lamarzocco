@@ -1266,8 +1266,12 @@ const char *ctrl_focus_name_for_language(ctrl_focus_t focus, ctrl_language_t lan
       return ctrl_text(CTRL_TEXT_FOCUS_BBW_DOSE_2, language);
     case CTRL_FOCUS_DASHBOARD:
       return "Dashboard";
+    case CTRL_FOCUS_BREW_TIMER:
+      return "Brew Timer";
     case CTRL_FOCUS_PREBREW:
       return ctrl_text(CTRL_TEXT_PREBREWING, language);
+    case CTRL_FOCUS_BACKFLUSH:
+      return "Backflush";
     default:
       return "Unknown";
   }
