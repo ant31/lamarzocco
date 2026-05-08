@@ -225,19 +225,6 @@ static ctrl_focus_t runtime_next_page_focus(const ctrl_state_t *state, int delta
   return pages[((cur + delta) % count + count) % count];
 }
 
-static bool should_defer_machine_send(uint32_t field_mask) {
-  const uint32_t deferred_mask =
-    LM_CTRL_MACHINE_FIELD_TEMPERATURE |
-    LM_CTRL_MACHINE_FIELD_INFUSE |
-    LM_CTRL_MACHINE_FIELD_PAUSE |
-    LM_CTRL_MACHINE_FIELD_BBW_DOSE_1 |
-    LM_CTRL_MACHINE_FIELD_BBW_DOSE_2;
-
-  return field_mask != LM_CTRL_MACHINE_FIELD_NONE &&
-         (field_mask & deferred_mask) != 0 &&
-         (field_mask & ~deferred_mask) == 0;
-}
-
 static bool has_local_ble_binding(lm_ctrl_machine_binding_t *binding) {
   lm_ctrl_machine_binding_t local_binding = {0};
 

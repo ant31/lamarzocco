@@ -78,10 +78,6 @@ static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
 /* Number of real focus-based pages (excludes the backflush page slot). */
 #define MAIN_FOCUS_PAGE_COUNT (LM_CTRL_UI_MAIN_PAGE_COUNT - 1)
 
-static bool is_dashboard_page_focus(ctrl_focus_t focus) {
-  return focus == CTRL_FOCUS_DASHBOARD;
-}
-
 static size_t main_page_count(uint32_t feature_mask) {
   size_t count = 0;
 
