@@ -1035,9 +1035,7 @@ void lm_ctrl_machine_link_get_info(lm_ctrl_machine_link_info_t *info) {
   info->loaded_mask = s_link.loaded_mask;
   info->feature_mask = s_link.feature_mask;
   info->water_status = preferred_water_status_locked();
-  /* brewing_active is not yet exposed by BLE or cloud dashboards —
-   * stubbed false until the protocol layer surfaces it. */
-  info->brewing_active = false;
+  info->brewing_active = s_link.brewing_active;
   portEXIT_CRITICAL(&s_link_lock);
 }
 
@@ -1061,6 +1059,12 @@ esp_err_t lm_ctrl_machine_link_start_backflush(void) {
     status_text,
     sizeof(status_text)
   );
+}
+
+void lm_ctrl_machine_link_set_brewing_active(bool active) {
+  portENTER_CRITICAL(&s_link_lock);
+  s_link.brewing_active = active;
+  portEXIT_CRITICAL(&s_link_lock);
 }
 
 uint32_t lm_ctrl_machine_link_status_version(void) {
