@@ -41,6 +41,7 @@ static const char *ICON_SLASH_SYMBOL = "/";
 
 static const ctrl_focus_t MAIN_PAGE_ORDER[LM_CTRL_UI_MAIN_PAGE_COUNT] = {
   CTRL_FOCUS_DASHBOARD,
+  CTRL_FOCUS_BREW_TIMER,
   CTRL_FOCUS_TEMPERATURE,
   CTRL_FOCUS_PREBREW,
   CTRL_FOCUS_STEAM,
@@ -48,6 +49,7 @@ static const ctrl_focus_t MAIN_PAGE_ORDER[LM_CTRL_UI_MAIN_PAGE_COUNT] = {
   CTRL_FOCUS_BBW_MODE,
   CTRL_FOCUS_BBW_DOSE_1,
   CTRL_FOCUS_BBW_DOSE_2,
+  CTRL_FOCUS_BACKFLUSH,
 };
 
 enum {
@@ -74,7 +76,7 @@ static bool focus_supported(uint32_t feature_mask, ctrl_focus_t focus) {
   if (focus == CTRL_FOCUS_BBW_MODE || focus == CTRL_FOCUS_BBW_DOSE_1 || focus == CTRL_FOCUS_BBW_DOSE_2) {
     return (feature_mask & CTRL_FEATURE_BBW) != 0;
   }
-
+  /* All other focuses including DASHBOARD, BREW_TIMER, PREBREW, BACKFLUSH */
   return focus >= CTRL_FOCUS_TEMPERATURE && focus < CTRL_FOCUS_COUNT;
 }
 
@@ -107,9 +109,8 @@ static int main_page_index(uint32_t feature_mask, ctrl_focus_t focus) {
   return 0;
 }
 
-/* Returns the page index of the backflush page (always the last one). */
 static int backflush_page_index(uint32_t feature_mask) {
-  return (int)main_page_count(feature_mask) - 1;
+  return main_page_index(feature_mask, CTRL_FOCUS_BACKFLUSH);
 }
 
 static ctrl_focus_t focus_from_page_index(uint32_t feature_mask, int index) {
@@ -823,7 +824,7 @@ static void render_backflush_screen(
   set_hidden(ui->power_right_button, true);
   set_hidden(ui->power_hint, true);
 
-  /* Show page dots — backflush dot is the last one, highlighted */
+  /* Show page dots — backflush dot highlighted */
   for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
     if (i >= page_count) {
       set_hidden(ui->page_dots[i], true);
@@ -906,43 +907,30 @@ static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta) {
     return;
   }
 
-  const int current_index = ui->rendered_backflush_visible
-    ? backflush_page_index(ui->rendered_feature_mask)
-    : main_page_index(ui->rendered_feature_mask, ui->rendered_focus);
-  const int page_count = (int)main_page_count(ui->rendered_feature_mask);
-  const int bf_index   = backflush_page_index(ui->rendered_feature_mask);
-  int next_index       = current_index + delta;
-
-  /* Swiping forward past the backflush page — wrap to first page */
-  if (next_index >= page_count) {
-    if (ui->rendered_backflush_visible) {
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
-    }
-    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, CTRL_FOCUS_DASHBOARD);
-    return;
+  /* Determine current page index from focus (or backflush if open) */
+  ctrl_focus_t current_focus = ui->rendered_backflush_visible
+    ? CTRL_FOCUS_BACKFLUSH
+    : ui->rendered_focus;
+  /* If brew timer screen is active, treat it as the brew timer focus */
+  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
+    current_focus = CTRL_FOCUS_BREW_TIMER;
   }
 
-  /* Swiping backward before the first page — land on backflush */
-  if (next_index < 0) {
-    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
-    return;
-  }
+  const int current_index = main_page_index(ui->rendered_feature_mask, current_focus);
+  const int page_count    = (int)main_page_count(ui->rendered_feature_mask);
+  const int next_index    = ((current_index + delta) % page_count + page_count) % page_count;
+  const ctrl_focus_t next_focus = focus_from_page_index(ui->rendered_feature_mask, next_index);
 
-  /* Swiping into the backflush slot */
-  if (next_index == bf_index) {
-    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
-    return;
+  /* Close brew timer if we're leaving it */
+  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
   }
-
-  if (ui->rendered_backflush_visible) {
+  /* Close backflush if we're leaving it */
+  if (ui->rendered_backflush_visible && next_focus != CTRL_FOCUS_BACKFLUSH) {
     dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
   }
 
-  dispatch_action_direct(
-    ui,
-    LM_CTRL_UI_ACTION_SELECT_FOCUS,
-    focus_from_page_index(ui->rendered_feature_mask, next_index)
-  );
+  dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, next_focus);
 }
 
 static void handle_screen_gesture(lv_event_t *event) {
@@ -1259,13 +1247,13 @@ static void render_prebrew_screen(
     "Pulse water before\nthe shot starts",
     COLOR_MUTED);
 
-  /* IN column */
-  set_label_text(ui->prebrew_in_title,  "IN",  in_tc);
+  /* ON column */
+  set_label_text(ui->prebrew_in_title,  "ON",  in_tc);
   snprintf(buf, sizeof(buf), "%.1f s", state->values.infuse_s);
   set_label_text(ui->prebrew_in_value,  buf, in_vc);
 
-  /* OUT column */
-  set_label_text(ui->prebrew_out_title, "OUT", out_tc);
+  /* OFF column */
+  set_label_text(ui->prebrew_out_title, "OFF", out_tc);
   snprintf(buf, sizeof(buf), "%.1f s", state->values.pause_s);
   set_label_text(ui->prebrew_out_value, buf, out_vc);
 
@@ -1312,11 +1300,21 @@ static void render_brew_timer_screen(
   set_hidden(ui->power_left_button, true);
   set_hidden(ui->power_right_button, true);
   set_hidden(ui->power_hint, true);
-  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
-    set_hidden(ui->page_dots[i], true);
-  }
 
   set_hidden(ui->brew_timer_card, false);
+
+  /* Page dots */
+  {
+    const int page_index = main_page_index(ui->rendered_feature_mask, CTRL_FOCUS_BREW_TIMER);
+    const size_t page_count = main_page_count(ui->rendered_feature_mask);
+    for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+      if (i >= page_count) { set_hidden(ui->page_dots[i], true); continue; }
+      const int x_offset = (int)((int)i * 17) - (int)(((int)page_count - 1) * 17 / 2);
+      lv_obj_align(ui->page_dots[i], LV_ALIGN_CENTER, x_offset, 106);
+      set_hidden(ui->page_dots[i], false);
+      style_page_dot(ui->page_dots[i], (int)i == page_index);
+    }
+  }
 
   set_label_text(ui->brew_timer_value, view->brew_timer_text, COLOR_ACTIVE);
   set_label_text(
@@ -1359,6 +1357,11 @@ static void render_main_screen(
   /* Pre-brew combined page */
   if (state->focus == CTRL_FOCUS_PREBREW) {
     render_prebrew_screen(ui, state, view);
+    return;
+  }
+
+  /* Brew timer and backflush are handled at the screen level, not here */
+  if (state->focus == CTRL_FOCUS_BREW_TIMER || state->focus == CTRL_FOCUS_BACKFLUSH) {
     return;
   }
 
@@ -1741,7 +1744,7 @@ static void render_setup_screen(lm_ctrl_ui_t *ui, const ctrl_state_t *state, con
 
   lv_obj_align(ui->setup_title, LV_ALIGN_TOP_MID, 0, 24);
   lv_obj_align(ui->setup_qr, LV_ALIGN_TOP_MID, 0, 56);
-  lv_obj_align_to(ui->setup_body, ui->setup_qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+  lv_obj_align_to(ui->setup_body, ui->setup_qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
   set_label_text(ui->setup_title, "Setup", COLOR_ACTIVE);
   set_label_text(ui->setup_body, body, COLOR_TEXT);
   set_label_text(ui->setup_action_list, "", COLOR_TEXT);
@@ -1789,6 +1792,17 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_add_event_cb(ui->screen, handle_screen_gesture, LV_EVENT_GESTURE, ui);
   lv_obj_add_event_cb(ui->screen, handle_touch_down, LV_EVENT_PRESSED, ui);
   lv_obj_add_event_cb(ui->screen, handle_touch_up, LV_EVENT_RELEASED, ui);
+
+  /* Raise long-press threshold to 3 s so accidental holds don't trigger it */
+  {
+    lv_indev_t *indev = lv_indev_get_next(NULL);
+    while (indev != NULL) {
+      if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+        lv_indev_set_long_press_time(indev, 3000);
+      }
+      indev = lv_indev_get_next(indev);
+    }
+  }
 
   lv_scr_load(base_scr);
 
@@ -2005,22 +2019,22 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_radius(ui->setup_qr, 12, 0);
   lv_obj_add_event_cb(ui->setup_qr, handle_setup_long_press, LV_EVENT_LONG_PRESSED, ui);
 
-  ui->setup_connect_button = create_button(ui->setup_card, 100, 36, 0, -8, &ui->setup_connect_label);
-  lv_obj_align_to(ui->setup_connect_button, ui->setup_qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+  ui->setup_body = lv_label_create(ui->setup_card);
+  lv_obj_set_width(ui->setup_body, 236);
+  lv_label_set_long_mode(ui->setup_body, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(ui->setup_body, UI_FONT_14, 0);
+  lv_obj_set_style_text_align(ui->setup_body, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align_to(ui->setup_body, ui->setup_qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+  lv_obj_add_event_cb(ui->setup_body, handle_setup_long_press, LV_EVENT_LONG_PRESSED, ui);
+
+  /* Connect button — placed below the body text, near the bottom */
+  ui->setup_connect_button = create_button(ui->setup_card, 100, 36, 0, 86, &ui->setup_connect_label);
   lv_obj_set_style_bg_color(ui->setup_connect_button, COLOR_BUTTON, 0);
   lv_obj_set_style_shadow_width(ui->setup_connect_button, 0, 0);
   lv_obj_set_style_border_width(ui->setup_connect_button, 1, 0);
   lv_obj_set_style_border_color(ui->setup_connect_button, COLOR_RING, 0);
   set_label_text(ui->setup_connect_label, "Connect", COLOR_ACTIVE);
   bind_button(ui, BIND_SETUP_CONNECT, ui->setup_connect_button, LM_CTRL_UI_ACTION_CONNECT_MACHINE, CTRL_FOCUS_TEMPERATURE);
-
-  ui->setup_body = lv_label_create(ui->setup_card);
-  lv_obj_set_width(ui->setup_body, 236);
-  lv_label_set_long_mode(ui->setup_body, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(ui->setup_body, UI_FONT_14, 0);
-  lv_obj_set_style_text_align(ui->setup_body, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align_to(ui->setup_body, ui->setup_connect_button, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
-  lv_obj_add_event_cb(ui->setup_body, handle_setup_long_press, LV_EVENT_LONG_PRESSED, ui);
 
   ui->setup_action_list = lv_label_create(ui->setup_card);
   lv_obj_set_width(ui->setup_action_list, 236);

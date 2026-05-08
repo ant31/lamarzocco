@@ -981,7 +981,11 @@ void ctrl_set_focus(ctrl_state_t *state, ctrl_focus_t focus) {
   }
 
   state->focus = focus;
-  state->screen = CTRL_SCREEN_MAIN;
+  /* BREW_TIMER and BACKFLUSH are handled by the runtime before ctrl_set_focus
+   * is called, so we only set screen=MAIN for the regular focuses here. */
+  if (focus != CTRL_FOCUS_BREW_TIMER && focus != CTRL_FOCUS_BACKFLUSH) {
+    state->screen = CTRL_SCREEN_MAIN;
+  }
 }
 
 void ctrl_toggle_focus(ctrl_state_t *state, ctrl_focus_t focus) {
@@ -1285,8 +1289,12 @@ const char *ctrl_focus_page_title(ctrl_focus_t focus, ctrl_language_t language) 
       return ctrl_focus_name_for_language(focus, language);
     case CTRL_FOCUS_DASHBOARD:
       return "Dashboard";
+    case CTRL_FOCUS_BREW_TIMER:
+      return "Brew Timer";
     case CTRL_FOCUS_PREBREW:
       return ctrl_text(CTRL_TEXT_PREBREWING, language);
+    case CTRL_FOCUS_BACKFLUSH:
+      return "Backflush";
     default:
       return ctrl_text(CTRL_TEXT_SETTING, language);
   }

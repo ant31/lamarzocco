@@ -8,7 +8,7 @@
 
 /** Maximum number of horizontally swipeable main pages in the round UI.
  *  The last slot is always the Backflush page. */
-#define LM_CTRL_UI_MAIN_PAGE_COUNT 9
+#define LM_CTRL_UI_MAIN_PAGE_COUNT 11
 /** Maximum number of touch bindings stored for button-like actions. */
 #define LM_CTRL_UI_BINDING_COUNT 17
 /** Maximum setup status text length passed into the UI view model. */

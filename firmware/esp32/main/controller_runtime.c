@@ -191,6 +191,7 @@ static bool approx_equal(float a, float b) {
  * Backflush is swipe-only and intentionally excluded. */
 static const ctrl_focus_t k_page_order[] = {
   CTRL_FOCUS_DASHBOARD,
+  CTRL_FOCUS_BREW_TIMER,
   CTRL_FOCUS_TEMPERATURE,
   CTRL_FOCUS_PREBREW,
   CTRL_FOCUS_STEAM,
@@ -198,6 +199,7 @@ static const ctrl_focus_t k_page_order[] = {
   CTRL_FOCUS_BBW_MODE,
   CTRL_FOCUS_BBW_DOSE_1,
   CTRL_FOCUS_BBW_DOSE_2,
+  CTRL_FOCUS_BACKFLUSH,
 };
 #define K_PAGE_ORDER_COUNT ((int)(sizeof(k_page_order) / sizeof(k_page_order[0])))
 
@@ -214,7 +216,9 @@ static ctrl_focus_t runtime_next_page_focus(const ctrl_state_t *state, int delta
         continue;
       }
     }
-    if (f == state->focus) {
+    if (f == state->focus ||
+        (f == CTRL_FOCUS_BACKFLUSH && state->screen == CTRL_SCREEN_MAIN &&
+         /* treat backflush "focus" as current when backflush_open */ false)) {
       cur = count;
     }
     pages[count++] = f;
@@ -412,6 +416,10 @@ static void merge_loaded_values(
        state->focus == CTRL_FOCUS_BBW_DOSE_1 ||
        state->focus == CTRL_FOCUS_BBW_DOSE_2)) {
     state->focus = CTRL_FOCUS_DASHBOARD;
+  }
+  /* Dashboard is read-only, no pending edit should survive on it */
+  if (state->focus == CTRL_FOCUS_DASHBOARD) {
+    /* no-op here — pending edit is managed in the runtime, not state */
   }
 }
 
@@ -898,6 +906,19 @@ void lm_ctrl_runtime_handle_input_event(
       (void)lm_ctrl_haptic_click();
       break;
     case LM_CTRL_EVENT_SELECT_FOCUS:
+      if (event->focus == CTRL_FOCUS_BREW_TIMER) {
+        brew_timer_reset(&runtime->brew_timer);
+        runtime->state.screen = CTRL_SCREEN_BREW_TIMER;
+        /* Keep a stable focus so returning lands back on brew timer page */
+        runtime->state.focus = CTRL_FOCUS_BREW_TIMER;
+        (void)lm_ctrl_haptic_click();
+        break;
+      }
+      if (event->focus == CTRL_FOCUS_BACKFLUSH) {
+        runtime->backflush_open = true;
+        (void)lm_ctrl_haptic_click();
+        break;
+      }
       ctrl_set_focus(&runtime->state, event->focus);
       (void)lm_ctrl_haptic_click();
       break;
@@ -1071,6 +1092,7 @@ void lm_ctrl_runtime_handle_input_event(
     case LM_CTRL_EVENT_CLOSE_BREW_TIMER:
       brew_timer_reset(&runtime->brew_timer);
       runtime->state.screen = CTRL_SCREEN_MAIN;
+      runtime->state.focus = CTRL_FOCUS_BREW_TIMER;
       (void)lm_ctrl_haptic_click();
       break;
     case LM_CTRL_EVENT_TOGGLE_BREW_TIMER_RUN:
@@ -1105,10 +1127,12 @@ void lm_ctrl_runtime_handle_input_event(
       break;
     case LM_CTRL_EVENT_CLOSE_BACKFLUSH:
       runtime->backflush_open = false;
+      runtime->state.focus = CTRL_FOCUS_BACKFLUSH;
       (void)lm_ctrl_haptic_click();
       break;
     case LM_CTRL_EVENT_START_BACKFLUSH:
       runtime->backflush_open = false;
+      runtime->state.focus = CTRL_FOCUS_DASHBOARD;
       if (lm_ctrl_machine_link_start_backflush() == ESP_OK) {
         snprintf(runtime->status, sizeof(runtime->status), "Backflush started.");
       } else {
