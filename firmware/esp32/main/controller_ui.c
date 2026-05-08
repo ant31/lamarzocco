@@ -909,18 +909,27 @@ static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta) {
   const int current_index = ui->rendered_backflush_visible
     ? backflush_page_index(ui->rendered_feature_mask)
     : main_page_index(ui->rendered_feature_mask, ui->rendered_focus);
-  const int page_count    = (int)main_page_count(ui->rendered_feature_mask);
-  const int next_index    = current_index + delta;
+  const int page_count = (int)main_page_count(ui->rendered_feature_mask);
+  const int bf_index   = backflush_page_index(ui->rendered_feature_mask);
+  int next_index       = current_index + delta;
 
-  /* Swiping past the last page (backflush) wraps, swiping into last = open backflush */
+  /* Swiping forward past the backflush page — wrap to first page */
   if (next_index >= page_count) {
-    /* wrap around to first page */
-    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
-    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, CTRL_FOCUS_TEMPERATURE);
+    if (ui->rendered_backflush_visible) {
+      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    }
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_SELECT_FOCUS, CTRL_FOCUS_DASHBOARD);
     return;
   }
 
-  if (next_index == backflush_page_index(ui->rendered_feature_mask)) {
+  /* Swiping backward before the first page — land on backflush */
+  if (next_index < 0) {
+    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
+    return;
+  }
+
+  /* Swiping into the backflush slot */
+  if (next_index == bf_index) {
     dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
     return;
   }
@@ -1182,14 +1191,23 @@ static void render_prebrew_screen(
   const bool pending  = view != NULL && view->pending_edit;
   const bool in_edit  = pending && view->pending_edit_focus == CTRL_FOCUS_INFUSE;
   const bool out_edit = pending && view->pending_edit_focus == CTRL_FOCUS_PAUSE;
+  const int page_index = main_page_index(state->feature_mask, CTRL_FOCUS_PREBREW);
+  const size_t page_count = main_page_count(state->feature_mask);
 
-  /* Title color: amber when editing, white when selected, muted otherwise */
+  /* Value colors: ACTIVE when editing, TEXT when selected/normal, MUTED when other
+   * field is selected. Matches the main-screen pending-edit highlight convention. */
+  const lv_color_t in_vc  = in_edit  ? COLOR_ACTIVE :
+                             (sel && sel_i == 0) ? COLOR_ACTIVE :
+                             (sel && sel_i == 1) ? COLOR_TEXT : COLOR_TEXT;
+  const lv_color_t out_vc = out_edit ? COLOR_ACTIVE :
+                             (sel && sel_i == 1) ? COLOR_ACTIVE :
+                             (sel && sel_i == 0) ? COLOR_TEXT : COLOR_TEXT;
+
+  /* Sub-label colors */
   const lv_color_t in_tc  = in_edit  ? COLOR_ACTIVE :
-                             (sel && sel_i == 0) ? COLOR_TEXT : COLOR_MUTED;
-  const lv_color_t in_vc  = in_tc;
+                             (sel && sel_i == 0) ? COLOR_ACTIVE : COLOR_MUTED;
   const lv_color_t out_tc = out_edit ? COLOR_ACTIVE :
-                             (sel && sel_i == 1) ? COLOR_TEXT : COLOR_MUTED;
-  const lv_color_t out_vc = out_tc;
+                             (sel && sel_i == 1) ? COLOR_ACTIVE : COLOR_MUTED;
 
   set_hidden(ui->main_card, true);
   set_hidden(ui->presets_card, true);
@@ -1206,17 +1224,19 @@ static void render_prebrew_screen(
   set_hidden(ui->power_left_button, true);
   set_hidden(ui->power_right_button, true);
   set_hidden(ui->power_hint, true);
-  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
-    set_hidden(ui->page_dots[i], true);
-  }
 
   set_hidden(ui->prebrew_card, false);
 
-  set_label_text(ui->prebrew_in_title,  "Pre-brew  IN", in_tc);
-  snprintf(buf, sizeof(buf), "%.1f s", state->values.infuse_s);
-  set_label_text(ui->prebrew_in_value,  buf, in_vc);
+  /* Page title — same font/color/position as other main-screen pages */
+  set_label_text(ui->prebrew_title, "Pre-brew", COLOR_ACTIVE);
 
-  set_label_text(ui->prebrew_out_title, "Pre-brew OUT", out_tc);
+  /* IN row */
+  set_label_text(ui->prebrew_in_title, "On", in_tc);
+  snprintf(buf, sizeof(buf), "%.1f s", state->values.infuse_s);
+  set_label_text(ui->prebrew_in_value, buf, in_vc);
+
+  /* OUT row */
+  set_label_text(ui->prebrew_out_title, "Off", out_tc);
   snprintf(buf, sizeof(buf), "%.1f s", state->values.pause_s);
   set_label_text(ui->prebrew_out_value, buf, out_vc);
 
@@ -1227,12 +1247,25 @@ static void render_prebrew_screen(
   } else if (sel) {
     hint_text = "Rotate to switch  \xc2\xb7  Press to edit";
   } else {
-    hint_text = "Press to select a field";
+    hint_text = "Press to select";
   }
   set_label_text(ui->prebrew_hint, hint_text, COLOR_MUTED);
 
   if (view != NULL && view->heat_arc_visible) {
     lv_arc_set_value(ui->heat_arc, view->heat_progress_permille);
+  }
+
+  /* Page navigation dots — same logic as render_main_screen */
+  for (size_t i = 0; i < LM_CTRL_UI_MAIN_PAGE_COUNT; ++i) {
+    int x_offset = 0;
+    if (i >= page_count) {
+      set_hidden(ui->page_dots[i], true);
+      continue;
+    }
+    x_offset = (int)((int)i * 17) - (int)(((int)page_count - 1) * 17 / 2);
+    lv_obj_align(ui->page_dots[i], LV_ALIGN_CENTER, x_offset, 106);
+    set_hidden(ui->page_dots[i], false);
+    style_page_dot(ui->page_dots[i], (int)i == page_index);
   }
 }
 
@@ -2121,19 +2154,26 @@ esp_err_t lm_ctrl_ui_init(
   set_hidden(ui->brew_timer_card, true);
 
   /* ── Pre-brew combined page (CTRL_FOCUS_PREBREW) ──────────────────────── */
-  ui->prebrew_card = create_panel(ui->screen, 280, 220);
+  ui->prebrew_card = create_panel(ui->screen, 280, 230);
+
+  /* Page title — same style as ui->focus on main_card */
+  ui->prebrew_title = lv_label_create(ui->prebrew_card);
+  lv_obj_set_style_text_font(ui->prebrew_title, UI_FONT_20, 0);
+  lv_obj_set_style_text_align(ui->prebrew_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->prebrew_title, 250);
+  lv_obj_align(ui->prebrew_title, LV_ALIGN_TOP_MID, 0, 4);
 
   ui->prebrew_in_title = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_in_title, UI_FONT_16, 0);
   lv_obj_set_style_text_align(ui->prebrew_in_title, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_in_title, 240);
-  lv_obj_align(ui->prebrew_in_title, LV_ALIGN_TOP_MID, 0, 16);
+  lv_obj_align(ui->prebrew_in_title, LV_ALIGN_TOP_MID, 0, 42);
 
   ui->prebrew_in_value = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_in_value, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->prebrew_in_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_in_value, 240);
-  lv_obj_align(ui->prebrew_in_value, LV_ALIGN_TOP_MID, 0, 44);
+  lv_obj_align(ui->prebrew_in_value, LV_ALIGN_TOP_MID, 0, 68);
 
   /* Divider line between IN and OUT sections */
   {
@@ -2143,7 +2183,7 @@ esp_err_t lm_ctrl_ui_init(
     lv_obj_set_style_line_color(line, COLOR_RING, 0);
     lv_obj_set_style_line_opa(line, LV_OPA_40, 0);
     lv_obj_set_style_line_width(line, 1, 0);
-    lv_obj_align(line, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(line, LV_ALIGN_CENTER, 0, 4);
     lv_obj_add_flag(line, LV_OBJ_FLAG_GESTURE_BUBBLE);
   }
 
@@ -2151,20 +2191,20 @@ esp_err_t lm_ctrl_ui_init(
   lv_obj_set_style_text_font(ui->prebrew_out_title, UI_FONT_16, 0);
   lv_obj_set_style_text_align(ui->prebrew_out_title, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_out_title, 240);
-  lv_obj_align(ui->prebrew_out_title, LV_ALIGN_TOP_MID, 0, 116);
+  lv_obj_align(ui->prebrew_out_title, LV_ALIGN_TOP_MID, 0, 120);
 
   ui->prebrew_out_value = lv_label_create(ui->prebrew_card);
   lv_obj_set_style_text_font(ui->prebrew_out_value, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->prebrew_out_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_width(ui->prebrew_out_value, 240);
-  lv_obj_align(ui->prebrew_out_value, LV_ALIGN_TOP_MID, 0, 144);
+  lv_obj_align(ui->prebrew_out_value, LV_ALIGN_TOP_MID, 0, 146);
 
   ui->prebrew_hint = lv_label_create(ui->prebrew_card);
   lv_obj_set_width(ui->prebrew_hint, 240);
   lv_label_set_long_mode(ui->prebrew_hint, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(ui->prebrew_hint, UI_FONT_14, 0);
   lv_obj_set_style_text_align(ui->prebrew_hint, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(ui->prebrew_hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+  lv_obj_align(ui->prebrew_hint, LV_ALIGN_BOTTOM_MID, 0, -4);
 
   set_hidden(ui->prebrew_card, true);
 

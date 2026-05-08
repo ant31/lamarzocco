@@ -174,6 +174,7 @@ struct lm_ctrl_ui_s {
 
   /* Pre-brew combined page (CTRL_FOCUS_PREBREW) */
   lv_obj_t *prebrew_card;
+  lv_obj_t *prebrew_title;
   lv_obj_t *prebrew_in_title;
   lv_obj_t *prebrew_in_value;
   lv_obj_t *prebrew_out_title;

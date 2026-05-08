@@ -1272,6 +1272,13 @@ void lm_ctrl_runtime_tick(lm_ctrl_runtime_t *runtime, bool *needs_render) {
     }
   }
 
+  /* Tick the brew timer every 100 ms.
+   * brewing_active is wired to false until machine_link exposes it. */
+  brew_timer_tick(&runtime->brew_timer, false);
+  if (runtime->state.screen == CTRL_SCREEN_BREW_TIMER && needs_render != NULL) {
+    *needs_render = true;
+  }
+
   maybe_request_cloud_probe(&runtime->last_cloud_probe_request_us);
   maybe_request_value_sync(&runtime->state);
   maybe_request_periodic_value_refresh(&runtime->last_ble_refresh_request_us, &runtime->last_cloud_refresh_request_us);
