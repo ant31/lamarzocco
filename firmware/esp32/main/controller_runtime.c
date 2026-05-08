@@ -1327,6 +1327,8 @@ void lm_ctrl_runtime_build_ui_view(const lm_ctrl_runtime_t *runtime, lm_ctrl_ui_
   view->backflush_visible = runtime->backflush_open;
   view->pending_edit = runtime->pending_edit;
   view->pending_edit_focus = runtime->pending_edit_focus;
+  view->select_mode_active = runtime->select_mode_active;
+  view->select_field_index = runtime->select_field_index;
   view->shot_timer_visible = lm_ctrl_shot_timer_visible(&runtime->shot_timer_state);
   view->shot_timer_dismissable = lm_ctrl_shot_timer_dismissable(&runtime->shot_timer_state);
   if (view->shot_timer_visible) {
