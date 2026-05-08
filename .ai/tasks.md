@@ -3,6 +3,13 @@
     The timer must show the number in big to the decimal
 [ ] Wire brew_counter_update() to a real brewing_active signal once machine link exposes it.
     Infrastructure is in place (brew_counter.h/c, NVS keys, dashboard badge slot).
+
+[x] Dashboard read-only, combined pre-brew page, encoder navigates pages.
+    NOTE: Dashboard is now pure display (clock + large temp), no selection/edit.
+    CTRL_FOCUS_PREBREW is a new combined page: click→select, click→edit, click→confirm.
+    Timeout reverts at any stage. Encoder navigates pages when not in select/edit mode.
+    Fixed bug where DASHBOARD focus (enum value > BBW) was incorrectly reset to TEMPERATURE
+    on every machine value sync.
 [x] In the connect qr code page, add a 'connect' that will try to connect to the existing machine (the same thing that it does at the startup)
     NOTE: "Connect" button added to the QR/setup screen. Dispatches CONNECT_MACHINE event
     which calls lm_ctrl_machine_link_request_sync_mode(ALL). Hidden during reset flows.

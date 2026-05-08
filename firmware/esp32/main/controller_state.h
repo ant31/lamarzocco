@@ -34,6 +34,7 @@ typedef enum {
   CTRL_FOCUS_BBW_DOSE_1,
   CTRL_FOCUS_BBW_DOSE_2,
   CTRL_FOCUS_DASHBOARD,
+  CTRL_FOCUS_PREBREW,
   CTRL_FOCUS_COUNT,
 } ctrl_focus_t;
 
@@ -163,7 +164,6 @@ typedef struct {
   ctrl_recovery_action_t recovery_action;
   uint8_t theme_index;
   uint8_t backlight_level;
-  uint8_t dashboard_selection; /**< 0=temp, 1=infuse, 2=pause — highlighted on dashboard */
 } ctrl_state_t;
 
 /** Actions emitted by the state machine for status text and side effects. */

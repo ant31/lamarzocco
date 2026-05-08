@@ -63,6 +63,11 @@ typedef struct {
   ctrl_focus_t pending_edit_focus;
   ctrl_values_t pre_edit_values;    /* machine-reported values at edit start */
   int64_t pending_edit_timeout_us;  /* absolute esp_timer time; 0 = not armed */
+
+  /* Select mode — multi-field pages (prebrew) use click to pick a field before
+   * entering edit.  select_field_index: 0=first field, 1=second field. */
+  bool select_mode_active;
+  uint8_t select_field_index;
 } lm_ctrl_runtime_t;
 
 void lm_ctrl_runtime_init(lm_ctrl_runtime_t *runtime);

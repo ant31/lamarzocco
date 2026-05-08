@@ -737,7 +737,6 @@ void ctrl_state_init(ctrl_state_t *state) {
   state->feature_mask = 0;
   state->focus = CTRL_FOCUS_DASHBOARD;
   state->screen = CTRL_SCREEN_MAIN;
-  state->dashboard_selection = 0;
   state->backlight_level = 4;
   state->preset_count = CTRL_PRESET_DEFAULT_COUNT;
   state->preset_index = 0;
@@ -983,11 +982,6 @@ void ctrl_set_focus(ctrl_state_t *state, ctrl_focus_t focus) {
 
   state->focus = focus;
   state->screen = CTRL_SCREEN_MAIN;
-
-  /* Dashboard keeps its own selection; other pages reset it. */
-  if (focus != CTRL_FOCUS_DASHBOARD) {
-    state->dashboard_selection = 0;
-  }
 }
 
 void ctrl_toggle_focus(ctrl_state_t *state, ctrl_focus_t focus) {
@@ -1289,6 +1283,8 @@ const char *ctrl_focus_page_title(ctrl_focus_t focus, ctrl_language_t language) 
       return ctrl_focus_name_for_language(focus, language);
     case CTRL_FOCUS_DASHBOARD:
       return "Dashboard";
+    case CTRL_FOCUS_PREBREW:
+      return ctrl_text(CTRL_TEXT_PREBREWING, language);
     default:
       return ctrl_text(CTRL_TEXT_SETTING, language);
   }

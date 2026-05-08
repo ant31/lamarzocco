@@ -187,16 +187,42 @@ static bool approx_equal(float a, float b) {
   return delta < 0.05f;
 }
 
-static bool is_dashboard_focus(ctrl_focus_t focus) {
-  return focus == CTRL_FOCUS_DASHBOARD;
-}
+/* Ordered pages navigated by the encoder on the main screen.
+ * Backflush is swipe-only and intentionally excluded. */
+static const ctrl_focus_t k_page_order[] = {
+  CTRL_FOCUS_DASHBOARD,
+  CTRL_FOCUS_TEMPERATURE,
+  CTRL_FOCUS_PREBREW,
+  CTRL_FOCUS_STEAM,
+  CTRL_FOCUS_STANDBY,
+  CTRL_FOCUS_BBW_MODE,
+  CTRL_FOCUS_BBW_DOSE_1,
+  CTRL_FOCUS_BBW_DOSE_2,
+};
+#define K_PAGE_ORDER_COUNT ((int)(sizeof(k_page_order) / sizeof(k_page_order[0])))
 
-/* Map dashboard_selection index to the actual machine field focus. */
-static ctrl_focus_t dashboard_selection_to_focus(uint8_t selection) {
-  static const ctrl_focus_t k_map[3] = {
-    CTRL_FOCUS_TEMPERATURE, CTRL_FOCUS_INFUSE, CTRL_FOCUS_PAUSE,
-  };
-  return k_map[selection < 3 ? selection : 0];
+static ctrl_focus_t runtime_next_page_focus(const ctrl_state_t *state, int delta) {
+  ctrl_focus_t pages[K_PAGE_ORDER_COUNT];
+  int count = 0;
+  int cur = 0;
+  int i;
+
+  for (i = 0; i < K_PAGE_ORDER_COUNT; i++) {
+    const ctrl_focus_t f = k_page_order[i];
+    if (f == CTRL_FOCUS_BBW_MODE || f == CTRL_FOCUS_BBW_DOSE_1 || f == CTRL_FOCUS_BBW_DOSE_2) {
+      if ((state->feature_mask & CTRL_FEATURE_BBW) == 0) {
+        continue;
+      }
+    }
+    if (f == state->focus) {
+      cur = count;
+    }
+    pages[count++] = f;
+  }
+  if (count == 0) {
+    return CTRL_FOCUS_DASHBOARD;
+  }
+  return pages[((cur + delta) % count + count) % count];
 }
 
 static bool should_defer_machine_send(uint32_t field_mask) {
@@ -392,8 +418,13 @@ static void merge_loaded_values(
   }
   state->feature_mask = feature_mask;
   state->loaded_mask |= loaded_mask;
-  if ((state->feature_mask & CTRL_FEATURE_BBW) == 0 && state->focus >= CTRL_FOCUS_BBW_MODE) {
-    state->focus = CTRL_FOCUS_TEMPERATURE;
+  /* Only reset focus when a BBW-specific page is active and BBW is no longer available.
+   * MUST NOT use >= comparison — DASHBOARD and PREBREW sit above BBW in the enum. */
+  if ((state->feature_mask & CTRL_FEATURE_BBW) == 0 &&
+      (state->focus == CTRL_FOCUS_BBW_MODE ||
+       state->focus == CTRL_FOCUS_BBW_DOSE_1 ||
+       state->focus == CTRL_FOCUS_BBW_DOSE_2)) {
+    state->focus = CTRL_FOCUS_DASHBOARD;
   }
 }
 
@@ -835,28 +866,27 @@ void lm_ctrl_runtime_handle_input_event(
 
   switch (event->type) {
     case LM_CTRL_EVENT_ROTATE:
-      /* Dashboard navigation: cycle which widget is selected */
-      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
-          !runtime->pending_edit &&
-          is_dashboard_focus(runtime->state.focus)) {
-        const int new_sel = (((int)runtime->state.dashboard_selection) +
-                              (event->delta_steps > 0 ? 1 : -1) + 3) % 3;
-        runtime->state.dashboard_selection = (uint8_t)new_sel;
+      /* Select mode: encoder cycles between fields on multi-field pages */
+      if (runtime->select_mode_active && !runtime->pending_edit) {
+        runtime->select_field_index = (uint8_t)(
+          ((int)runtime->select_field_index + (event->delta_steps > 0 ? 1 : -1) + 2) % 2);
+        /* Extend select timeout so the user has time to press the button */
+        runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
         (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
         (void)lm_ctrl_haptic_click();
         break;
       }
-      /* Dashboard edit mode: rotate the field currently being edited */
-      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
-          runtime->pending_edit &&
-          is_dashboard_focus(runtime->state.focus)) {
+      /* Edit mode: encoder changes the value currently being edited */
+      if (runtime->pending_edit && runtime->state.screen == CTRL_SCREEN_MAIN) {
         const ctrl_focus_t edit_focus = runtime->pending_edit_focus;
         const uint32_t field_mask = lm_ctrl_machine_field_for_focus(edit_focus);
-        /* Temporarily swap focus so ctrl_rotate operates on the right field */
-        runtime->state.focus = edit_focus;
-        ctrl_rotate(&runtime->state, event->delta_steps);
-        runtime->state.focus = CTRL_FOCUS_DASHBOARD;
-        if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+        if (lm_ctrl_controller_field_is_editable(access.editable_mask, edit_focus) &&
+            field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+          /* Temporarily set focus so ctrl_rotate touches the right field */
+          const ctrl_focus_t saved = runtime->state.focus;
+          runtime->state.focus = edit_focus;
+          ctrl_rotate(&runtime->state, event->delta_steps);
+          runtime->state.focus = saved;
           note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
           runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
         }
@@ -864,47 +894,16 @@ void lm_ctrl_runtime_handle_input_event(
         (void)lm_ctrl_haptic_click();
         break;
       }
-      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
-          !lm_ctrl_controller_field_is_editable(access.editable_mask, runtime->state.focus)) {
+      /* Navigation mode: encoder moves between pages on the main screen */
+      if (runtime->state.screen == CTRL_SCREEN_MAIN) {
+        ctrl_set_focus(&runtime->state, runtime_next_page_focus(
+          &runtime->state, event->delta_steps > 0 ? 1 : -1));
+        (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
+        (void)lm_ctrl_haptic_click();
         break;
       }
-      {
-        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(runtime->state.focus);
-        if (field_mask != LM_CTRL_MACHINE_FIELD_NONE && should_defer_machine_send(field_mask)) {
-          /* First rotation of a new edit sequence — snapshot pre-edit values */
-          if (!runtime->pending_edit || runtime->pending_edit_focus != runtime->state.focus) {
-            lm_ctrl_machine_link_get_values(&runtime->pre_edit_values, NULL, NULL);
-            /* If cloud hasn't loaded yet, use current state as baseline */
-            if (runtime->pre_edit_values.temperature_c == 0.0f) {
-              runtime->pre_edit_values = runtime->state.values;
-            }
-            runtime->pending_edit_focus = runtime->state.focus;
-            runtime->pending_edit = true;
-          }
-          ctrl_rotate(&runtime->state, event->delta_steps);
-          /* Refresh hold and extend timeout on every step */
-          note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
-          runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
-          /* Do NOT queue to machine link — wait for confirm */
-        } else {
-          ctrl_rotate(&runtime->state, event->delta_steps);
-          if (lm_ctrl_machine_link_queue_values(&runtime->state.values, field_mask) != ESP_OK &&
-              field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-            ESP_LOGW(TAG, "Failed to queue BLE update for focus=%s", ctrl_focus_name(runtime->state.focus));
-          } else if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-            note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
-            clear_delayed_machine_send_mask(&runtime->delayed_machine_send, field_mask);
-          }
-        }
-      }
-      should_persist_state = runtime->state.screen == CTRL_SCREEN_MAIN && (
-        runtime->state.focus == CTRL_FOCUS_TEMPERATURE ||
-        runtime->state.focus == CTRL_FOCUS_INFUSE ||
-        runtime->state.focus == CTRL_FOCUS_PAUSE ||
-        runtime->state.focus == CTRL_FOCUS_BBW_MODE ||
-        runtime->state.focus == CTRL_FOCUS_BBW_DOSE_1 ||
-        runtime->state.focus == CTRL_FOCUS_BBW_DOSE_2
-      );
+      /* Other screens (presets selector, reset arc) — use ctrl_rotate directly */
+      ctrl_rotate(&runtime->state, event->delta_steps);
       (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
       (void)lm_ctrl_haptic_click();
       break;
@@ -919,82 +918,96 @@ void lm_ctrl_runtime_handle_input_event(
       }
       break;
     case LM_CTRL_EVENT_TOGGLE_FOCUS: {
-      /* On the dashboard, button press edits the currently selected dashboard widget. */
+      /* Dashboard is read-only — button press does nothing */
       if (runtime->state.screen == CTRL_SCREEN_MAIN &&
-          is_dashboard_focus(runtime->state.focus)) {
-        const ctrl_focus_t dash_field = dashboard_selection_to_focus(runtime->state.dashboard_selection);
+          runtime->state.focus == CTRL_FOCUS_DASHBOARD) {
+        break;
+      }
 
-        if (!lm_ctrl_controller_field_is_editable(access.editable_mask, dash_field)) {
+      /* Pre-brew combined page — 3-state click model */
+      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
+          runtime->state.focus == CTRL_FOCUS_PREBREW) {
+        if (runtime->pending_edit) {
+          /* State 3: edit → confirm, return to select mode */
+          confirm_pending_edit(runtime);
+          runtime->select_mode_active = true;
+          runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+          ESP_LOGI(TAG, "Prebrew edit confirmed — back to select mode");
+          (void)lm_ctrl_haptic_click();
           break;
         }
-        if (runtime->pending_edit && runtime->pending_edit_focus == dash_field) {
+        if (runtime->select_mode_active) {
+          /* State 2: select → edit */
+          const ctrl_focus_t field = runtime->select_field_index == 0
+            ? CTRL_FOCUS_INFUSE : CTRL_FOCUS_PAUSE;
+          if (!lm_ctrl_controller_field_is_editable(access.editable_mask, field)) {
+            break;
+          }
+          runtime->pre_edit_values = runtime->state.values;
+          runtime->pending_edit_focus = field;
+          runtime->pending_edit = true;
+          runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+          {
+            const uint32_t fm = lm_ctrl_machine_field_for_focus(field);
+            if (fm != LM_CTRL_MACHINE_FIELD_NONE) {
+              note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, fm);
+            }
+          }
+          ESP_LOGI(TAG, "Prebrew: enter edit for field=%s", ctrl_focus_name(field));
+          (void)lm_ctrl_haptic_click();
+          break;
+        }
+        /* State 1: view → select */
+        runtime->select_mode_active = true;
+        runtime->select_field_index = 0;
+        runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
+        ESP_LOGI(TAG, "Prebrew: enter select mode");
+        (void)lm_ctrl_haptic_click();
+        break;
+      }
+
+      /* Single-value pages — 2-state model: view → edit → confirm */
+      {
+        const ctrl_focus_t eff_focus = runtime->state.focus;
+
+        if (runtime->state.screen == CTRL_SCREEN_MAIN &&
+            !lm_ctrl_controller_field_is_editable(access.editable_mask, eff_focus)) {
+          break;
+        }
+        if (runtime->pending_edit && runtime->pending_edit_focus == eff_focus) {
+          /* Edit → confirm */
+          const bool waking_from_standby =
+            eff_focus == CTRL_FOCUS_STANDBY &&
+            runtime->state.values.standby_on == false;
           confirm_pending_edit(runtime);
+          if (eff_focus == CTRL_FOCUS_STANDBY && runtime->state.values.standby_on) {
+            reset_heat_state(&runtime->heat_state);
+            clear_heat_refresh(&runtime->heat_refresh);
+          } else if (waking_from_standby) {
+            reset_heat_state(&runtime->heat_state);
+            arm_heat_refresh(&runtime->heat_refresh, HEAT_REFRESH_INITIAL_DELAY_US);
+          }
           (void)lm_ctrl_haptic_click();
           break;
         }
         if (runtime->pending_edit) {
           confirm_pending_edit(runtime);
         }
+        /* View → edit */
         runtime->pre_edit_values = runtime->state.values;
-        /* Keep focus on CTRL_FOCUS_DASHBOARD — only pending_edit_focus changes */
-        runtime->pending_edit_focus = dash_field;
+        ctrl_toggle_focus(&runtime->state, eff_focus);
+        runtime->pending_edit_focus = eff_focus;
         runtime->pending_edit = true;
         runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
         {
-          const uint32_t fm = lm_ctrl_machine_field_for_focus(dash_field);
-          if (fm != LM_CTRL_MACHINE_FIELD_NONE) {
-            note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, fm);
+          const uint32_t field_mask = lm_ctrl_machine_field_for_focus(eff_focus);
+          if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
+            note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
           }
         }
-        ESP_LOGI(TAG, "Dashboard edit start sel=%u field=%s",
-                 (unsigned)runtime->state.dashboard_selection, ctrl_focus_name(dash_field));
+        ESP_LOGI(TAG, "Edit start focus=%s", ctrl_focus_name(eff_focus));
         (void)lm_ctrl_haptic_click();
-        break;
       }
-      /* On other main-screen pages use the current focus. */
-      const ctrl_focus_t eff_focus = (runtime->state.screen == CTRL_SCREEN_MAIN)
-        ? runtime->state.focus
-        : event->focus;
-
-      if (runtime->state.screen == CTRL_SCREEN_MAIN &&
-          !lm_ctrl_controller_field_is_editable(access.editable_mask, eff_focus)) {
-        break;
-      }
-      /* If a pending edit exists on this same focus, confirm it */
-      if (runtime->pending_edit && runtime->pending_edit_focus == eff_focus) {
-        const bool waking_from_standby =
-          eff_focus == CTRL_FOCUS_STANDBY &&
-          runtime->state.values.standby_on == false;
-        confirm_pending_edit(runtime);
-        if (eff_focus == CTRL_FOCUS_STANDBY && runtime->state.values.standby_on) {
-          reset_heat_state(&runtime->heat_state);
-          clear_heat_refresh(&runtime->heat_refresh);
-        } else if (waking_from_standby) {
-          reset_heat_state(&runtime->heat_state);
-          arm_heat_refresh(&runtime->heat_refresh, HEAT_REFRESH_INITIAL_DELAY_US);
-        }
-        (void)lm_ctrl_haptic_click();
-        break;
-      }
-      /* If a different focus is pending, confirm it first before toggling */
-      if (runtime->pending_edit) {
-        confirm_pending_edit(runtime);
-      }
-      /* Snapshot pre-toggle state so revert can undo it */
-      runtime->pre_edit_values = runtime->state.values;
-      ctrl_toggle_focus(&runtime->state, eff_focus);
-      runtime->pending_edit_focus = eff_focus;
-      runtime->pending_edit = true;
-      runtime->pending_edit_timeout_us = esp_timer_get_time() + PENDING_EDIT_TIMEOUT_US;
-      /* Hold the local value so cloud sync doesn't overwrite it during the window */
-      {
-        const uint32_t field_mask = lm_ctrl_machine_field_for_focus(eff_focus);
-        if (field_mask != LM_CTRL_MACHINE_FIELD_NONE) {
-          note_local_value_hold(&runtime->local_value_hold, &runtime->state.values, field_mask);
-        }
-      }
-      ESP_LOGI(TAG, "Toggle pending confirmation for focus=%s", ctrl_focus_name(eff_focus));
-      (void)lm_ctrl_haptic_click();
       break;
     }
     case LM_CTRL_EVENT_OPEN_PRESETS:
@@ -1225,7 +1238,22 @@ void lm_ctrl_runtime_tick(lm_ctrl_runtime_t *runtime, bool *needs_render) {
     revert_pending_edit(runtime);
     runtime->pending_edit = false;
     runtime->pending_edit_timeout_us = 0;
+    runtime->select_mode_active = false;
+    runtime->select_field_index = 0;
     ESP_LOGI(TAG, "Pending edit timed out — value reverted");
+    if (needs_render != NULL) {
+      *needs_render = true;
+    }
+  }
+
+  /* Time out select mode when user pauses before choosing to edit */
+  if (!runtime->pending_edit && runtime->select_mode_active &&
+      runtime->pending_edit_timeout_us > 0 &&
+      esp_timer_get_time() >= runtime->pending_edit_timeout_us) {
+    runtime->select_mode_active = false;
+    runtime->select_field_index = 0;
+    runtime->pending_edit_timeout_us = 0;
+    ESP_LOGI(TAG, "Select mode timed out");
     if (needs_render != NULL) {
       *needs_render = true;
     }

@@ -8,7 +8,7 @@
 
 /** Maximum number of horizontally swipeable main pages in the round UI.
  *  The last slot is always the Backflush page. */
-#define LM_CTRL_UI_MAIN_PAGE_COUNT 10
+#define LM_CTRL_UI_MAIN_PAGE_COUNT 9
 /** Maximum number of touch bindings stored for button-like actions. */
 #define LM_CTRL_UI_BINDING_COUNT 15
 /** Maximum setup status text length passed into the UI view model. */
@@ -39,6 +39,8 @@ typedef struct {
   bool backflush_visible;
   bool pending_edit;
   ctrl_focus_t pending_edit_focus;
+  bool select_mode_active;
+  uint8_t select_field_index;   /**< 0=first field (infuse), 1=second (pause) */
   char shot_timer_text[24];
   char heat_eta_text[16];
   char setup_status_text[LM_CTRL_UI_STATUS_TEXT_LEN];
@@ -145,19 +147,21 @@ struct lm_ctrl_ui_s {
   lv_obj_t *backflush_start_button;
   lv_obj_t *backflush_start_label;
 
-  /* Dashboard panels (shown when focus is CTRL_FOCUS_DASHBOARD) */
+  /* Dashboard panels (shown when focus is CTRL_FOCUS_DASHBOARD) — read-only */
   lv_obj_t *dash_clock_panel;
   lv_obj_t *dash_clock_hhmm;
   lv_obj_t *dash_clock_no_sync;
   lv_obj_t *dash_brew_count;
   lv_obj_t *dash_temp_panel;
-  lv_obj_t *dash_temp_title;
-  lv_obj_t *dash_temp_value;
-  lv_obj_t *dash_prebrew_panel;
-  lv_obj_t *dash_prebrew_in_label;
-  lv_obj_t *dash_prebrew_in_value;
-  lv_obj_t *dash_prebrew_out_label;
-  lv_obj_t *dash_prebrew_out_value;
+  lv_obj_t *dash_temp_value;    /**< large read-only temperature display */
+
+  /* Pre-brew combined page (CTRL_FOCUS_PREBREW) */
+  lv_obj_t *prebrew_card;
+  lv_obj_t *prebrew_in_title;
+  lv_obj_t *prebrew_in_value;
+  lv_obj_t *prebrew_out_title;
+  lv_obj_t *prebrew_out_value;
+  lv_obj_t *prebrew_hint;
 
   /* Settings screen */
   lv_obj_t *settings_card;
