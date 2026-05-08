@@ -91,7 +91,7 @@ static size_t main_page_count(uint32_t feature_mask) {
       count++;
     }
   }
-  return count + 1; /* +1 for backflush */
+  return count; /* backflush is already included in MAIN_PAGE_ORDER */
 }
 
 static int main_page_index(uint32_t feature_mask, ctrl_focus_t focus) {
@@ -608,22 +608,16 @@ static void handle_tap_zone(lv_event_t *event) {
     return;
   }
 
-  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
-    if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
-    }
-    return;
-  }
-
   switch (ui->rendered_screen) {
+    case CTRL_SCREEN_BREW_TIMER:
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
         dispatch_focus_change(ui, -1);
       } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, +1);
-      } else if (dir == LV_DIR_TOP) {
+      } else if (dir == LV_DIR_TOP && ui->rendered_screen == CTRL_SCREEN_MAIN) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
-      } else if (dir == LV_DIR_BOTTOM) {
+      } else if (dir == LV_DIR_BOTTOM && ui->rendered_screen == CTRL_SCREEN_MAIN) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETTINGS, CTRL_FOCUS_TEMPERATURE);
       }
       break;
@@ -735,22 +729,16 @@ static void handle_touch_up(lv_event_t *event) {
     return;
   }
 
-  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
-    if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
-    }
-    return;
-  }
-
   switch (ui->rendered_screen) {
+    case CTRL_SCREEN_BREW_TIMER:
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
         dispatch_focus_change(ui, +1);
       } else if (dir == LV_DIR_RIGHT) {
         dispatch_focus_change(ui, -1);
-      } else if (dir == LV_DIR_TOP) {
+      } else if (dir == LV_DIR_TOP && ui->rendered_screen == CTRL_SCREEN_MAIN) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_SETTINGS, CTRL_FOCUS_TEMPERATURE);
-      } else if (dir == LV_DIR_BOTTOM) {
+      } else if (dir == LV_DIR_BOTTOM && ui->rendered_screen == CTRL_SCREEN_MAIN) {
         dispatch_action_direct(ui, LM_CTRL_UI_ACTION_OPEN_PRESETS, CTRL_FOCUS_TEMPERATURE);
       }
       break;
@@ -904,28 +892,26 @@ static void bind_button(lm_ctrl_ui_t *ui, size_t index, lv_obj_t *button, lm_ctr
 }
 
 static void dispatch_focus_change(lm_ctrl_ui_t *ui, int delta) {
-  if (ui == NULL || ui->action_cb == NULL || ui->rendered_screen != CTRL_SCREEN_MAIN) {
+  if (ui == NULL || ui->action_cb == NULL) {
+    return;
+  }
+  if (ui->rendered_screen != CTRL_SCREEN_MAIN &&
+      ui->rendered_screen != CTRL_SCREEN_BREW_TIMER) {
     return;
   }
 
   /* Determine current page index from focus (or backflush if open) */
   ctrl_focus_t current_focus = ui->rendered_backflush_visible
     ? CTRL_FOCUS_BACKFLUSH
-    : ui->rendered_focus;
-  /* If brew timer screen is active, treat it as the brew timer focus */
-  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
-    current_focus = CTRL_FOCUS_BREW_TIMER;
-  }
+    : (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER
+        ? CTRL_FOCUS_BREW_TIMER
+        : ui->rendered_focus);
 
   const int current_index = main_page_index(ui->rendered_feature_mask, current_focus);
   const int page_count    = (int)main_page_count(ui->rendered_feature_mask);
   const int next_index    = ((current_index + delta) % page_count + page_count) % page_count;
   const ctrl_focus_t next_focus = focus_from_page_index(ui->rendered_feature_mask, next_index);
 
-  /* Close brew timer if we're leaving it */
-  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
-    dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
-  }
   /* Close backflush if we're leaving it */
   if (ui->rendered_backflush_visible && next_focus != CTRL_FOCUS_BACKFLUSH) {
     dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BACKFLUSH, CTRL_FOCUS_TEMPERATURE);
@@ -953,15 +939,16 @@ static void handle_screen_gesture(lv_event_t *event) {
     return;
   }
 
-  if (ui->rendered_screen == CTRL_SCREEN_BREW_TIMER) {
-    if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
-      dispatch_action_direct(ui, LM_CTRL_UI_ACTION_CLOSE_BREW_TIMER, CTRL_FOCUS_TEMPERATURE);
-      lv_indev_wait_release(indev);
-    }
-    return;
-  }
-
   switch (ui->rendered_screen) {
+    case CTRL_SCREEN_BREW_TIMER:
+      if (dir == LV_DIR_LEFT) {
+        dispatch_focus_change(ui, +1);
+        lv_indev_wait_release(indev);
+      } else if (dir == LV_DIR_RIGHT) {
+        dispatch_focus_change(ui, -1);
+        lv_indev_wait_release(indev);
+      }
+      return;
     case CTRL_SCREEN_MAIN:
       if (dir == LV_DIR_LEFT) {
         dispatch_focus_change(ui, +1);
@@ -1317,18 +1304,19 @@ static void render_brew_timer_screen(
     }
   }
 
+  set_label_text(ui->brew_timer_title, "Brew Timer", COLOR_ACTIVE);
   set_label_text(ui->brew_timer_value, view->brew_timer_text, COLOR_ACTIVE);
   set_label_text(
     ui->brew_timer_startstop_label,
     view->brew_timer_running ? "Stop" : "Start",
-    view->brew_timer_running ? COLOR_BG : COLOR_BG
+    COLOR_BG
   );
   lv_obj_set_style_bg_color(
     ui->brew_timer_startstop_button,
     view->brew_timer_running ? COLOR_RING : COLOR_ACTIVE,
     0
   );
-  set_label_text(ui->brew_timer_hint, "Swipe down to close", COLOR_MUTED);
+  set_label_text(ui->brew_timer_hint, "Swipe left/right to navigate", COLOR_MUTED);
 }
 
 static void render_main_screen(
@@ -2198,12 +2186,19 @@ esp_err_t lm_ctrl_ui_init(
   /* ── Brew Timer screen ────────────────────────────────────────────────── */
   ui->brew_timer_card = create_panel(ui->screen, 300, 260);
 
+  ui->brew_timer_title = lv_label_create(ui->brew_timer_card);
+  lv_obj_set_style_text_font(ui->brew_timer_title, UI_FONT_20, 0);
+  lv_obj_set_style_text_align(ui->brew_timer_title, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(ui->brew_timer_title, 280);
+  lv_obj_align(ui->brew_timer_title, LV_ALIGN_TOP_MID, 0, 22);
+  lv_obj_add_flag(ui->brew_timer_title, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
   ui->brew_timer_value = lv_label_create(ui->brew_timer_card);
   lv_obj_set_style_text_font(ui->brew_timer_value, UI_FONT_40, 0);
   lv_obj_set_style_text_align(ui->brew_timer_value, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_text_letter_space(ui->brew_timer_value, 4, 0);
   lv_obj_set_width(ui->brew_timer_value, 280);
-  lv_obj_align(ui->brew_timer_value, LV_ALIGN_CENTER, 0, -40);
+  lv_obj_align(ui->brew_timer_value, LV_ALIGN_CENTER, 0, -30);
   lv_label_set_text(ui->brew_timer_value, "0.0");
 
   ui->brew_timer_startstop_button = create_button(

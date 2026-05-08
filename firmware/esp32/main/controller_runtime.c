@@ -892,10 +892,28 @@ void lm_ctrl_runtime_handle_input_event(
         (void)lm_ctrl_haptic_click();
         break;
       }
-      /* Navigation mode: encoder moves between pages on the main screen */
-      if (runtime->state.screen == CTRL_SCREEN_MAIN) {
-        ctrl_set_focus(&runtime->state, runtime_next_page_focus(
-          &runtime->state, event->delta_steps > 0 ? 1 : -1));
+      /* Navigation mode: encoder moves between pages on main or brew-timer screen */
+      if (runtime->state.screen == CTRL_SCREEN_MAIN ||
+          runtime->state.screen == CTRL_SCREEN_BREW_TIMER) {
+        const int nav_delta = event->delta_steps > 0 ? 1 : -1;
+        const ctrl_focus_t next_focus = runtime_next_page_focus(&runtime->state, nav_delta);
+        /* Leaving brew timer page — reset the timer */
+        if (runtime->state.screen == CTRL_SCREEN_BREW_TIMER &&
+            next_focus != CTRL_FOCUS_BREW_TIMER) {
+          brew_timer_reset(&runtime->brew_timer);
+          runtime->state.screen = CTRL_SCREEN_MAIN;
+        }
+        /* Entering backflush page */
+        if (next_focus == CTRL_FOCUS_BACKFLUSH) {
+          runtime->state.focus = CTRL_FOCUS_BACKFLUSH;
+          runtime->backflush_open = true;
+        } else if (next_focus == CTRL_FOCUS_BREW_TIMER) {
+          brew_timer_reset(&runtime->brew_timer);
+          runtime->state.screen = CTRL_SCREEN_BREW_TIMER;
+          runtime->state.focus = CTRL_FOCUS_BREW_TIMER;
+        } else {
+          ctrl_set_focus(&runtime->state, next_focus);
+        }
         (void)lm_ctrl_leds_indicate_rotation(event->delta_steps);
         (void)lm_ctrl_haptic_click();
         break;

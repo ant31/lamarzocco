@@ -171,6 +171,7 @@ struct lm_ctrl_ui_s {
 
   /* Brew timer screen */
   lv_obj_t *brew_timer_card;
+  lv_obj_t *brew_timer_title;
   lv_obj_t *brew_timer_value;
   lv_obj_t *brew_timer_hint;
   lv_obj_t *brew_timer_startstop_button;
